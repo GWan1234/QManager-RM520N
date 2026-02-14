@@ -9,7 +9,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   RefreshCw,
@@ -24,6 +23,7 @@ import {
 } from "lucide-react";
 // import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TbCircleCheckFilled, TbCircleXFilled } from "react-icons/tb";
 
 import {
   DropdownMenu,
@@ -63,52 +63,62 @@ const NetworkEventsCard = () => {
         "LTE Band 66 detected with excellent signal strength (RSRP: -75 dBm)",
       datetime: "2026-02-14T10:30:00",
       category: "bandChanges",
+      positive: true,
     },
     {
       interpretation: "Carrier Aggregation enabled: 2 carriers active (LTE-A)",
       datetime: "2026-02-14T10:28:15",
       category: "caEvents",
+      positive: true,
     },
     {
       interpretation: "Signal quality improved: RSRQ changed from -12 to -8 dB",
       datetime: "2026-02-14T10:25:30",
       category: "networkEvents",
+      positive: true,
     },
     {
       interpretation:
         "Switched from LTE Band 12 to Band 66 for better performance",
       datetime: "2026-02-14T10:20:45",
       category: "bandChanges",
+      positive: true,
     },
     {
       interpretation: "5G NR connection established on n71 band",
       datetime: "2026-02-14T10:15:00",
       category: "networkEvents",
+      positive: true,
     },
     {
       interpretation: "Carrier Aggregation disabled: Single carrier mode",
       datetime: "2026-02-14T10:10:20",
       category: "caEvents",
+      positive: false,
     },
     {
-      interpretation: "Network mode changed from LTE to 5G NSA",
+      interpretation: "Network mode changed from 5G to LTE",
       datetime: "2026-02-14T10:05:10",
       category: "networkEvents",
+      positive: false,
     },
     {
       interpretation: "LTE Band 4 frequency: 2155 MHz (EARFCN: 2300)",
       datetime: "2026-02-14T09:58:45",
       category: "bandChanges",
+      positive: true,
     },
     {
       interpretation: "3-carrier aggregation detected: Bands 2+4+66",
       datetime: "2026-02-14T09:50:30",
       category: "caEvents",
+      positive: true,
     },
     {
       interpretation: "Tower handoff completed: Cell ID changed",
       datetime: "2026-02-14T09:45:15",
       category: "networkEvents",
+      positive: false,
     },
   ];
 
@@ -141,32 +151,13 @@ const NetworkEventsCard = () => {
     return "networkEvents";
   };
 
-  // Helper function to get interpretation color
-  const getInterpretationColor = (interpretation: string): string => {
-    const lower = interpretation.toLowerCase();
-    if (
-      lower.includes("excellent") ||
-      lower.includes("improved") ||
-      lower.includes("enabled")
-    ) {
-      return "border-green-500 text-green-700";
-    }
-    if (lower.includes("disabled") || lower.includes("poor")) {
-      return "border-red-500 text-red-700";
-    }
-    return "border-blue-500 text-blue-700";
-  };
-
-  // Helper function to get interpretation icon
-  const getInterpretationIcon = (interpretation: string) => {
-    const category = getEventCategory(interpretation);
-    if (category === "bandChanges") {
-      return <Radio className="h-4 w-4" />;
-    }
-    if (category === "caEvents") {
-      return <Zap className="h-4 w-4" />;
-    }
-    return <Signal className="h-4 w-4" />;
+  // Helper function to get event icon based on positive/negative
+  const getEventIcon = (positive: boolean) => {
+    return positive ? (
+      <TbCircleCheckFilled className="w-6 h-6 text-green-500" />
+    ) : (
+      <TbCircleXFilled className="w-6 h-6 text-orange-500" />
+    );
   };
 
   // Process interpretations based on active tab
@@ -375,17 +366,8 @@ const NetworkEventsCard = () => {
                                 );
                                 return (
                                   <TableRow key={index}>
-                                    <TableCell className="font-medium hidden md:table-cell ">
-                                      <Badge
-                                        variant="outline"
-                                        className={getInterpretationColor(
-                                          interpretation.interpretation,
-                                        )}
-                                      >
-                                        {getInterpretationIcon(
-                                          interpretation.interpretation,
-                                        )}
-                                      </Badge>
+                                    <TableCell className="font-medium hidden md:table-cell">
+                                      {getEventIcon(interpretation.positive)}
                                     </TableCell>
                                     <TableCell className="max-w-md">
                                       {interpretation.interpretation}
@@ -481,14 +463,7 @@ const NetworkEventsCard = () => {
                                 return (
                                   <TableRow key={index}>
                                     <TableCell className="font-medium hidden md:table-cell">
-                                      <Badge
-                                        variant="outline"
-                                        className={getInterpretationColor(
-                                          interpretation.interpretation,
-                                        )}
-                                      >
-                                        <Radio className="h-4 w-4" />
-                                      </Badge>
+                                      {getEventIcon(interpretation.positive)}
                                     </TableCell>
                                     <TableCell className="max-w-md">
                                       {interpretation.interpretation}
@@ -599,14 +574,7 @@ const NetworkEventsCard = () => {
                                 return (
                                   <TableRow key={index}>
                                     <TableCell className="font-medium hidden md:table-cell">
-                                      <Badge
-                                        variant="outline"
-                                        className={getInterpretationColor(
-                                          interpretation.interpretation,
-                                        )}
-                                      >
-                                        <Zap className="h-4 w-4" />
-                                      </Badge>
+                                      {getEventIcon(interpretation.positive)}
                                     </TableCell>
                                     <TableCell className="max-w-md">
                                       {interpretation.interpretation}
@@ -715,14 +683,7 @@ const NetworkEventsCard = () => {
                                 return (
                                   <TableRow key={index}>
                                     <TableCell className="font-medium hidden md:table-cell">
-                                      <Badge
-                                        variant="outline"
-                                        className={getInterpretationColor(
-                                          interpretation.interpretation,
-                                        )}
-                                      >
-                                        <Signal className="h-4 w-4" />
-                                      </Badge>
+                                      {getEventIcon(interpretation.positive)}
                                     </TableCell>
                                     <TableCell className="max-w-md">
                                       {interpretation.interpretation}

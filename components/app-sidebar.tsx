@@ -160,7 +160,7 @@ const data = {
   ],
   monitoring: [
     {
-      title: "Network Analysis",
+      title: "Network Events",
       url: "/monitoring",
       icon: PieChart,
       items: [
