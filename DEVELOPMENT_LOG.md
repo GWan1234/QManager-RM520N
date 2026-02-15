@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 14, 2026
+**Last Updated:** February 15, 2026 (TA debugging session)
 
 ---
 
@@ -183,7 +183,7 @@ Note: LTE line is SEPARATE from the "servingcell" line. NR5G-NSA field order: PC
 | Source | Data |
 |--------|------|
 | `/proc/net/dev` | RX/TX bytes for traffic calculation |
-| `/proc/loadavg` | CPU load average |
+| `/proc/stat` | CPU usage percentage (delta between cycles) |
 | `/proc/uptime` | Device uptime |
 | `/proc/meminfo` | MemTotal, MemAvailable |
 
@@ -230,6 +230,25 @@ Semicolon-chained command — works as a single `sms_tool` call (one lock acquis
 +QCAINFO: "SCC",9485,75,"LTE BAND 28",1,135,-108,-10,-89,0,0,-,-
 ```
 **Parsing:** Count `"SCC"` lines containing `LTE BAND` for LTE CA. Count `"SCC"` lines containing `NR` for NR CA. Both counts tracked separately.
+
+#### `AT+QNWCFG="lte_time_advance"` / `"nr_time_advance"`
+
+**Architecture:** TA reporting is enabled once at boot via `AT+QNWCFG="lte_time_advance",1` and `AT+QNWCFG="nr_time_advance",1` (in `collect_boot_data()`). Tier 2 polling uses query-only commands:
+- `AT+QNWCFG="lte_time_advance"` — returns current LTE TA value
+- `AT+QNWCFG="nr_time_advance"` — returns current NR TA value (ERROR when no 5G active)
+
+Both are separate AT calls (not chained) so an NR ERROR doesn't kill the LTE result.
+
+```
++QNWCFG: "lte_time_advance",1,42    ← 3 fields: feature_name, enabled, TA_value
+```
+**Parsing:** Select lines with 3+ comma-separated fields (`awk -F',' 'NF>=3'`). Extract the last field as the TA value. Strip `\r` carriage returns (sms_tool artifact).
+
+**Distance calculation (done on frontend):**
+- **LTE:** TA index (0–1282). Distance = (c × 16 × TA × Ts) / 2 where Ts = 1/30720000 (3GPP TS 36.213)
+- **NR:** Raw NTA value. Distance = (c × NTA × Tc) / 2 where Tc = 1/(480×10³×4096) (3GPP TS 38.213)
+- If no 5G anchor active, NR TA will be empty/null — displays as "-"
+- Example: LTE TA=42 → 3.28 km
 
 ### Boot-Only — Static Data (Once at Startup)
 
@@ -315,7 +334,8 @@ Full schema for `/tmp/qmanager_status.json`. TypeScript interfaces are in `types
     "rsrp": -121,
     "rsrq": -17,
     "sinr": 7,
-    "rssi": -85
+    "rssi": -85,
+    "ta": 42
   },
   "nr": {
     "state": "connected | inactive | unknown",
@@ -325,11 +345,12 @@ Full schema for `/tmp/qmanager_status.json`. TypeScript interfaces are in `types
     "rsrp": -88,
     "rsrq": -9,
     "sinr": 15,
-    "scs": 30
+    "scs": 30,
+    "ta": null
   },
   "device": {
     "temperature": 37,
-    "cpu_usage": 1.26,
+    "cpu_usage": 12,
     "memory_used_mb": 284,
     "memory_total_mb": 569,
     "uptime_seconds": 2110,
@@ -388,7 +409,7 @@ The poller maps the AT+QENG `state` field to `service_status` as follows:
 | **4G Primary Status** | `lte-status.tsx` | ✅ **DONE** | `data.lte` — band, EARFCN, PCI, RSRP, RSRQ, RSSI, SINR |
 | **5G Primary Status** | `nr-status.tsx` | ✅ **DONE** | `data.nr` — band, ARFCN, PCI, RSRP, RSRQ, SINR, SCS |
 | **Device Information** | `device-status.tsx` | ✅ **DONE** | `data.device` — firmware, build date, manufacturer, IMEI, IMSI, ICCID, phone, LTE category, MIMO |
-| **Device Metrics** | `device-metrics.tsx` | ❌ Hardcoded | `data.device` (temp, CPU, memory, uptime) + `data.traffic` (live traffic, data usage) |
+| **Device Metrics** | `device-metrics.tsx` | ✅ **DONE** | `data.device` (temp, CPU, memory, uptime) + `data.traffic` (live traffic, data usage) |
 | **Live Latency** | `live-latency.tsx` | ❌ Hardcoded | Separate implementation (not from poller cache) |
 | **Recent Activities** | `recent-activities.tsx` | ❌ Hardcoded | Separate implementation (event log) |
 | **Signal History** | `signal-history.tsx` | ❌ Mock data | `data.lte.rsrp/sinr` + `data.nr.rsrp/sinr` (accumulated client-side) |
@@ -418,7 +439,7 @@ The poller maps the AT+QENG `state` field to `service_status` as follows:
 
 ## 6. Deployment Notes
 
-### Current State (Feb 14, 2026)
+### Current State (Feb 15, 2026)
 
 - Static export built with `async rewrites()` block **commented out** in `next.config.ts` (rewrites are server-side only, not compatible with `output: "export"`).
 - Init script deployed to `/etc/init.d/qmanager` with proper permissions.
@@ -583,7 +604,7 @@ This allows callers to distinguish lock contention from modem failures.
 
 1. ~~**Wire `NrStatusComponent`** — Accept `data.nr` props, same pattern as LTE status.~~ ✅ Done
 2. ~~**Wire `DeviceStatus`** — Accept `data.device` props for firmware, IMEI, IMSI, ICCID, phone, LTE category, MIMO, build date, manufacturer.~~ ✅ Done
-3. **Wire `DeviceMetricsComponent`** — Accept `data.device` (temperature, CPU, memory, uptime) and `data.traffic` (live traffic, data usage). Implement warning badges for high temp/CPU.
+3. ~~**Wire `DeviceMetricsComponent`** — Accept `data.device` (temperature, CPU, memory, uptime) and `data.traffic` (live traffic, data usage). Implement warning badges for high temp/CPU.~~ ✅ Done
 4. **Wire `SignalHistoryComponent`** — Replace mock data generator with real-time accumulation of `data.lte.rsrp/sinr` and `data.nr.rsrp/sinr` values using a client-side ring buffer.
 
 ### Subsequent Pages
@@ -600,6 +621,53 @@ This allows callers to distinguish lock contention from modem failures.
 11. **Error recovery testing** — SIM ejection, modem unresponsive, `sms_tool` crash, stale lock scenarios.
 12. **Long command support** — Verify `AT+QSCAN` flag-based coordination between poller and Cell Scanner page.
 13. **NR MIMO layers** — Currently only LTE MIMO is fetched. May need a separate command for NR MIMO (investigate `AT+QNWCFG="nr_mimo_layers"` or similar).
+14. **TA-based cell distance** — ✅ Done. Root cause: `parse_time_advance()` used `rev` (not available on BusyBox) to extract the last CSV field. Replaced with `awk -F',' '{print $NF}'`. Also removed `else` branches that were resetting the other technology's TA when calling with single-technology data.
+
+---
+
+## 9. TA Debugging Notes (Resolved ✅)
+
+Timing Advance (TA) cell distance calculation. Backend polls TA values from the modem, frontend computes distance using 3GPP formulas and displays as "3.28 km (TA 42)".
+
+### Root Cause
+
+`parse_time_advance()` used `rev | cut -d',' -f1 | rev` to extract the last CSV field. `rev` is not available on BusyBox/OpenWRT. The command failed silently, producing an empty string that was rejected by the numeric validator → `lte_ta=""` → `null` in JSON.
+
+### Fix
+
+Replaced `rev | cut -d',' -f1 | rev` with `awk -F',' '{print $NF}'` (BusyBox-native). Also removed `else` branches that unnecessarily reset the other technology's TA value when parsing single-technology responses.
+
+### Debugging History
+
+1. 4-command chained AT call — NR ERROR killed the whole chain (exit code 2), preventing LTE TA parse.
+2. Split into separate LTE/NR calls — LTE succeeded but TA still null.
+3. Carriage return hypothesis — added `tr -d '\r'`, didn't fix it.
+4. Deployment gap — fix wasn't deployed to modem. Re-deployed, still null.
+5. Refactored to enable-at-boot + query-only — cleaner response, still null.
+6. Traced pipeline on modem — revealed `rev: not found`. Replaced with `awk`. **Fixed.**
+
+### Verified
+
+```
+root@RM551E-GL:~# cat /tmp/qmanager_status.json | grep '"ta"'
+    "ta": 43
+    "ta": null
+```
+
+LTE TA=43 correctly parsed. NR TA=null as expected (no active 5G).
+
+### Lesson Learned
+
+Always verify command availability on BusyBox before using in shell scripts. Common missing commands: `rev`, `seq`, `tac`, `readarray`. Safe alternatives: `awk`, `sed`, `cut`, `tr`.
+
+### Files Modified
+
+| File | Changes |
+|------|--------|
+| `scripts/usr/bin/qmanager_poller` | Added `lte_ta`/`nr_ta` state vars, `parse_time_advance()` function, boot-time TA enable, Tier 2 query-only polling, JSON output fields |
+| `types/modem-status.ts` | Added `ta: number \| null` to `LteStatus` and `NrStatus`, `calculateLteDistance()`, `calculateNrDistance()`, `formatDistance()` |
+| `components/dashboard/device-metrics.tsx` | Added "LTE Cell Distance" and "NR Cell Distance" rows, accepts `lteData`/`nrData` props |
+| `components/dashboard/home-component.tsx` | Passes `lteData={data?.lte}` and `nrData={data?.nr}` to DeviceMetricsComponent |
 
 ---
 

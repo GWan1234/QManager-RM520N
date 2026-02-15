@@ -148,6 +148,7 @@ const LTEStatusComponent = ({ data, isLoading }: LTEStatusComponentProps) => {
                 </div>
               </div>
             ))}
+            <Separator />
           </div>
         </div>
       </CardHeader>

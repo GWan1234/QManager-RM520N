@@ -11,7 +11,8 @@
 #
 # Tiers:
 #   Tier 1 (Hot):  Every cycle (~2s)  — AT+QENG="servingcell", /proc reads
-#   Tier 2 (Warm): Every 15 cycles    — AT+QTEMP, AT+COPS?, AT+CPIN?, AT+QUIMSLOT?
+#   Tier 2 (Warm): Every 15 cycles    — AT+QTEMP, AT+COPS?, AT+CPIN?, AT+QUIMSLOT?,
+#                                       AT+QCAINFO, AT+QNWCFG="*_time_advance"
 #   Boot-only:     Once at startup    — AT+CVERSION, AT+CGSN, AT+CIMI, AT+QCCID,
 #                                       AT+CNUM, AT+QGETCAPABILITY, AT+QNWCFG="lte_mimo_layers"
 #
@@ -71,6 +72,9 @@ nr_rsrq=""
 nr_sinr=""
 nr_scs=""
 
+lte_ta=""
+nr_ta=""
+
 # Network state
 network_type=""
 service_status="unknown"
@@ -86,6 +90,10 @@ prev_tx_bytes=0
 rx_bytes_per_sec=0
 tx_bytes_per_sec=0
 
+# CPU tracking (from /proc/stat)
+prev_cpu_idle=0
+prev_cpu_total=0
+
 # Data usage tracking
 total_rx_bytes=0
 total_tx_bytes=0
@@ -99,6 +107,18 @@ cpu_usage=0
 memory_used_mb=0
 memory_total_mb=0
 uptime_seconds=0
+
+# --- SCS Enum to kHz Mapping --------------------------------------------------
+map_scs_to_khz() {
+    case "$1" in
+        0) echo 15 ;;
+        1) echo 30 ;;
+        2) echo 60 ;;
+        3) echo 120 ;;
+        4) echo 240 ;;
+        *) echo "" ;;
+    esac
+}
 
 # --- Logging -----------------------------------------------------------------
 . /usr/lib/qmanager/qlog.sh 2>/dev/null || {
@@ -138,8 +158,6 @@ qcmd_exec() {
     fi
 
     # Strip echoed AT command and trailing OK from sms_tool output.
-    # sms_tool echoes the command back (e.g., "AT+COPS?" before "+COPS: ...").
-    # We keep only the actual response lines.
     result=$(printf '%s\n' "$result" | grep -v '^AT' | grep -v '^OK$' | grep -v '^$')
 
     case "$result" in
@@ -246,7 +264,9 @@ parse_serving_cell() {
             local nr_band_num
             nr_band_num=$(printf '%s' "$csv" | cut -d',' -f9)
             nr_band="N${nr_band_num}"
-            nr_scs=$(printf '%s' "$csv" | cut -d',' -f11)
+            local nr_scs_raw
+            nr_scs_raw=$(printf '%s' "$csv" | cut -d',' -f11)
+            nr_scs=$(map_scs_to_khz "$nr_scs_raw")
         fi
 
     # ===== SA MODE =====
@@ -268,7 +288,9 @@ parse_serving_cell() {
         nr_rsrp=$(printf '%s' "$csv" | cut -d',' -f13)
         nr_rsrq=$(printf '%s' "$csv" | cut -d',' -f14)
         nr_sinr=$(printf '%s' "$csv" | cut -d',' -f15)
-        nr_scs=$(printf '%s' "$csv" | cut -d',' -f16)
+        local nr_scs_raw
+        nr_scs_raw=$(printf '%s' "$csv" | cut -d',' -f16)
+        nr_scs=$(map_scs_to_khz "$nr_scs_raw")
 
     # ===== LTE-ONLY MODE =====
     elif [ "$has_lte" -gt 0 ]; then
@@ -455,14 +477,70 @@ parse_ca_info() {
     fi
 }
 
+# -----------------------------------------------------------------------------
+# Parse AT+QNWCFG="lte_time_advance" and "nr_time_advance" (Tier 2)
+# -----------------------------------------------------------------------------
+parse_time_advance() {
+    local raw="$1"
+
+    # LTE TA: +QNWCFG: "lte_time_advance",<enabled>,<ta>
+    # The enable command echoes back as +QNWCFG: "lte_time_advance",1
+    # The query echoes back as +QNWCFG: "lte_time_advance",1,<ta>
+    # We want the line with 3 fields (the one with the actual TA value)
+    local lte_ta_line
+    lte_ta_line=$(printf '%s\n' "$raw" | grep '"lte_time_advance"' | awk -F',' 'NF>=3' | head -1)
+
+    if [ -n "$lte_ta_line" ]; then
+        local ta_val
+        ta_val=$(printf '%s' "$lte_ta_line" | tr -d '"' | tr -d ' ' | tr -d '\r' | awk -F',' '{print $NF}')
+        case "$ta_val" in
+            *[!0-9-]*|'') lte_ta="" ;;
+            *) lte_ta="$ta_val" ;;
+        esac
+    fi
+
+    # NR TA: +QNWCFG: "nr_time_advance",<enabled>,<nta>
+    local nr_ta_line
+    nr_ta_line=$(printf '%s\n' "$raw" | grep '"nr_time_advance"' | awk -F',' 'NF>=3' | head -1)
+
+    if [ -n "$nr_ta_line" ]; then
+        local nta_val
+        nta_val=$(printf '%s' "$nr_ta_line" | tr -d '"' | tr -d ' ' | tr -d '\r' | awk -F',' '{print $NF}')
+        case "$nta_val" in
+            *[!0-9-]*|'') nr_ta="" ;;
+            *) nr_ta="$nta_val" ;;
+        esac
+    fi
+}
+
 # =============================================================================
 # SYSTEM METRICS (No modem lock needed)
 # =============================================================================
 
 update_proc_metrics() {
-    # --- CPU Load ---
-    local loadavg
-    loadavg=$(cat /proc/loadavg 2>/dev/null | cut -d' ' -f1)
+    # --- CPU Usage % (from /proc/stat delta) ---
+    local cpu_line
+    cpu_line=$(head -1 /proc/stat 2>/dev/null)
+    if [ -n "$cpu_line" ]; then
+        # /proc/stat format: cpu user nice system idle iowait irq softirq steal
+        local cur_idle cur_total
+        cur_idle=$(echo "$cpu_line" | awk '{print $5}')
+        cur_total=$(echo "$cpu_line" | awk '{print $2+$3+$4+$5+$6+$7+$8+$9}')
+
+        if [ "$prev_cpu_total" -gt 0 ] 2>/dev/null; then
+            local diff_idle diff_total
+            diff_idle=$((cur_idle - prev_cpu_idle))
+            diff_total=$((cur_total - prev_cpu_total))
+
+            if [ "$diff_total" -gt 0 ] 2>/dev/null; then
+                # Integer math: (diff_total - diff_idle) * 100 / diff_total
+                cpu_usage=$(( (diff_total - diff_idle) * 100 / diff_total ))
+            fi
+        fi
+
+        prev_cpu_idle=$cur_idle
+        prev_cpu_total=$cur_total
+    fi
 
     # --- Memory ---
     local mem_total mem_available
@@ -512,7 +590,7 @@ update_proc_metrics() {
     total_rx_bytes=$rx_bytes
     total_tx_bytes=$tx_bytes
 
-    cpu_usage="${loadavg:-0}"
+    cpu_usage="${cpu_usage:-0}"
 }
 
 # --- Connection Uptime -------------------------------------------------------
@@ -586,6 +664,12 @@ collect_boot_data() {
     if [ $? -eq 0 ]; then
         parse_mimo "$result"
     fi
+
+    # Enable Timing Advance reporting (one-time, persists until modem reboot)
+    qcmd_exec 'AT+QNWCFG="lte_time_advance",1' >/dev/null 2>&1
+    sleep "$SIP_DELAY"
+    qcmd_exec 'AT+QNWCFG="nr_time_advance",1' >/dev/null 2>&1
+    sleep "$SIP_DELAY"
 
     log_info "Boot data: FW=$boot_firmware BUILD=$boot_build_date MFG=$boot_manufacturer"
     log_info "Boot data: IMEI=$boot_imei IMSI=$boot_imsi ICCID=$boot_iccid"
@@ -678,6 +762,24 @@ poll_tier2() {
         t2_nr_ca_active=false
         t2_nr_ca_count=0
     fi
+    sleep "$SIP_DELAY"
+
+    # Timing Advance — LTE (query only, enabled at boot)
+    result=$(qcmd_exec 'AT+QNWCFG="lte_time_advance"')
+    if [ $? -eq 0 ]; then
+        parse_time_advance "$result"
+    else
+        lte_ta=""
+    fi
+    sleep "$SIP_DELAY"
+
+    # Timing Advance — NR (query only, will ERROR when no 5G active)
+    result=$(qcmd_exec 'AT+QNWCFG="nr_time_advance"')
+    if [ $? -eq 0 ]; then
+        parse_time_advance "$result"
+    else
+        nr_ta=""
+    fi
 }
 
 # =============================================================================
@@ -741,6 +843,7 @@ write_cache() {
     local json_lte_sinr="${lte_sinr:-null}"
     local json_lte_rssi="${lte_rssi:-null}"
     local json_lte_bandwidth="${lte_bandwidth:-null}"
+    local json_lte_ta="${lte_ta:-null}"
 
     local json_nr_arfcn="${nr_arfcn:-null}"
     local json_nr_pci="${nr_pci:-null}"
@@ -748,6 +851,7 @@ write_cache() {
     local json_nr_rsrq="${nr_rsrq:-null}"
     local json_nr_sinr="${nr_sinr:-null}"
     local json_nr_scs="${nr_scs:-null}"
+    local json_nr_ta="${nr_ta:-null}"
 
     local json_temperature="${t2_temperature:-null}"
 
@@ -782,7 +886,8 @@ write_cache() {
     "rsrp": ${json_lte_rsrp},
     "rsrq": ${json_lte_rsrq},
     "sinr": ${json_lte_sinr},
-    "rssi": ${json_lte_rssi}
+    "rssi": ${json_lte_rssi},
+    "ta": ${json_lte_ta}
   },
   "nr": {
     "state": "${nr_state}",
@@ -792,7 +897,8 @@ write_cache() {
     "rsrp": ${json_nr_rsrp},
     "rsrq": ${json_nr_rsrq},
     "sinr": ${json_nr_sinr},
-    "scs": ${json_nr_scs}
+    "scs": ${json_nr_scs},
+    "ta": ${json_nr_ta}
   },
   "device": {
     "temperature": ${json_temperature},

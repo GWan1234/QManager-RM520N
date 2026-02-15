@@ -148,6 +148,7 @@ const NrStatusComponent = ({ data, isLoading }: NrStatusComponentProps) => {
                 </div>
               </div>
             ))}
+            <Separator />
           </div>
         </div>
       </CardHeader>

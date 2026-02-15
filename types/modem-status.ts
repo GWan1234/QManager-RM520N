@@ -106,6 +106,8 @@ export interface LteStatus {
   sinr: number | null;
   /** Received Signal Strength Indicator (dBm) */
   rssi: number | null;
+  /** Timing Advance index (0–1282). Used for cell distance estimation. */
+  ta: number | null;
 }
 
 export interface NrStatus {
@@ -125,12 +127,14 @@ export interface NrStatus {
   sinr: number | null;
   /** Subcarrier Spacing in kHz (15, 30, 60, 120) */
   scs: number | null;
+  /** NR Timing Advance (NTA value). Used for cell distance estimation. */
+  ta: number | null;
 }
 
 export interface DeviceStatus {
   /** Average modem temperature in °C across all available sensors (null if unavailable) */
   temperature: number | null;
-  /** CPU load average (1-minute) */
+  /** CPU usage percentage (0–100), calculated from /proc/stat delta between poll cycles */
   cpu_usage: number;
   /** Used memory in MB */
   memory_used_mb: number;
@@ -252,6 +256,48 @@ export function formatBytes(bytes: number): string {
     return `${(bytes / 1_024).toFixed(0)} KB`;
   }
   return `${bytes} B`;
+}
+
+// --- Cell Distance Calculations (3GPP) --------------------------------------
+
+/**
+ * Calculates LTE cell distance from Timing Advance index.
+ * Based on 3GPP TS 36.213: NTA = 16 × TA, TS = 1/(2048×15000).
+ * Distance = (c × NTA × TS) / 2.
+ * @param ta - LTE TA index (0–1282)
+ * @returns distance in km, or null if TA is unavailable/invalid
+ */
+export function calculateLteDistance(ta: number | null): number | null {
+  if (ta === null || ta === undefined || ta < 0 || ta > 1282) return null;
+  const NTA = 16 * ta;
+  const TS = 1 / 30720000; // 1/(2048×15000)
+  const SPEED_OF_LIGHT = 3e8;
+  return (SPEED_OF_LIGHT * NTA * TS) / 2 / 1000;
+}
+
+/**
+ * Calculates NR cell distance from NTA value.
+ * Based on 3GPP TS 38.213: TC = 1/(480×10³×4096).
+ * Distance = (c × NTA × TC) / 2.
+ * @param nta - NR NTA value (already NTA, not TA index)
+ * @returns distance in km, or null if NTA is unavailable/invalid
+ */
+export function calculateNrDistance(nta: number | null): number | null {
+  if (nta === null || nta === undefined || nta < 0) return null;
+  const TC = 1 / (480 * 1000 * 4096);
+  const SPEED_OF_LIGHT = 3e8;
+  return (SPEED_OF_LIGHT * nta * TC) / 2 / 1000;
+}
+
+/**
+ * Formats a distance in km to a human-readable string.
+ * e.g., 0.156 → "156 m", 1.234 → "1.23 km"
+ */
+export function formatDistance(km: number | null): string {
+  if (km === null) return "-";
+  if (km < 0.01) return "< 10 m";
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(2)} km`;
 }
 
 /**
