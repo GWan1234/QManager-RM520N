@@ -313,26 +313,54 @@ parse_capability() {
 }
 
 # -----------------------------------------------------------------------------
-# Parse AT+QNWCFG="lte_mimo_layers" (Boot-only)
-# Populates: boot_mimo
+# Parse AT+QNWCFG="lte_mimo_layers" / "nr_mimo_layers" (Tier 2)
+# Args: $1 = LTE mimo response, $2 = NR mimo response (optional)
+# Populates: t2_mimo
 # -----------------------------------------------------------------------------
 parse_mimo() {
-    local raw="$1"
+    local lte_raw="$1"
+    local nr_raw="$2"
 
-    local mimo_line
-    mimo_line=$(printf '%s\n' "$raw" | grep '+QNWCFG: "lte_mimo_layers"' | head -1)
+    local lte_part=""
+    local nr_part=""
 
-    if [ -n "$mimo_line" ]; then
+    # LTE MIMO: +QNWCFG: "lte_mimo_layers",<ul>,<dl>
+    local lte_line
+    lte_line=$(printf '%s\n' "$lte_raw" | grep '+QNWCFG: "lte_mimo_layers"' | head -1)
+    if [ -n "$lte_line" ]; then
         local csv
-        csv=$(printf '%s' "$mimo_line" | sed 's/+QNWCFG: "lte_mimo_layers",//g' | tr -d ' \r')
-
+        csv=$(printf '%s' "$lte_line" | sed 's/+QNWCFG: "lte_mimo_layers",//g' | tr -d ' \r')
         local ul_mimo dl_mimo
         ul_mimo=$(printf '%s' "$csv" | cut -d',' -f1)
         dl_mimo=$(printf '%s' "$csv" | cut -d',' -f2)
-
         if [ -n "$ul_mimo" ] && [ -n "$dl_mimo" ]; then
-            boot_mimo="LTE ${ul_mimo}x${dl_mimo}"
+            lte_part="LTE ${ul_mimo}x${dl_mimo}"
         fi
+    fi
+
+    # NR MIMO: +QNWCFG: "nr_mimo_layers",<ul>,<dl>
+    if [ -n "$nr_raw" ]; then
+        local nr_line
+        nr_line=$(printf '%s\n' "$nr_raw" | grep '+QNWCFG: "nr_mimo_layers"' | head -1)
+        if [ -n "$nr_line" ]; then
+            local csv
+            csv=$(printf '%s' "$nr_line" | sed 's/+QNWCFG: "nr_mimo_layers",//g' | tr -d ' \r')
+            local ul_mimo dl_mimo
+            ul_mimo=$(printf '%s' "$csv" | cut -d',' -f1)
+            dl_mimo=$(printf '%s' "$csv" | cut -d',' -f2)
+            if [ -n "$ul_mimo" ] && [ -n "$dl_mimo" ]; then
+                nr_part="NR ${ul_mimo}x${dl_mimo}"
+            fi
+        fi
+    fi
+
+    # Combine: "LTE 1x4 | NR 2x4" or just "LTE 1x4"
+    if [ -n "$lte_part" ] && [ -n "$nr_part" ]; then
+        t2_mimo="${lte_part} | ${nr_part}"
+    elif [ -n "$lte_part" ]; then
+        t2_mimo="$lte_part"
+    elif [ -n "$nr_part" ]; then
+        t2_mimo="$nr_part"
     fi
 }
 

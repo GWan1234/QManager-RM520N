@@ -711,7 +711,7 @@ This allows callers to distinguish lock contention from modem failures.
 
 18. **Error recovery testing** — SIM ejection, modem unresponsive, `sms_tool` crash, stale lock scenarios.
 19. **Long command support** — Verify `AT+QSCAN` flag-based coordination between poller and Cell Scanner page.
-20. **NR MIMO layers** — Currently only LTE MIMO is fetched. May need a separate command for NR MIMO (investigate `AT+QNWCFG="nr_mimo_layers"` or similar).
+20. **NR MIMO layers** — ✅ Done. MIMO moved from boot-only to Tier 2 polling. Now queries both `AT+QNWCFG="lte_mimo_layers"` and `AT+QNWCFG="nr_mimo_layers"` every 15 cycles. Parser combines into `"LTE 1x4 | NR 2x4"` format. NR MIMO gracefully returns empty when no 5G is active.
 21. **TA-based cell distance** — ✅ Done. Root cause: `parse_time_advance()` used `rev` (not available on BusyBox) to extract the last CSV field. Replaced with `awk -F',' '{print $NF}'`. Also removed `else` branches that were resetting the other technology's TA when calling with single-technology data.
 
 ---

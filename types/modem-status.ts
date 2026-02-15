@@ -166,7 +166,7 @@ export interface DeviceStatus {
   phone_number: string;
   /** LTE UE Category, e.g. "20" (from AT+QGETCAPABILITY) */
   lte_category: string;
-  /** MIMO layers string, e.g. "LTE 1x4" (from AT+QNWCFG="lte_mimo_layers") */
+  /** Active MIMO layers, e.g. "LTE 1x4" or "LTE 1x4 | NR 2x4" (Tier 2, updates with signal conditions) */
   mimo: string;
 }
 

@@ -101,7 +101,7 @@ export function SignalHistoryComponent() {
     <Card className="@container/card">
       <CardHeader>
         <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-          Signal History
+          Signal Quality Monitor
         </CardTitle>
         <CardAction>
           <ToggleGroup
