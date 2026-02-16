@@ -14,7 +14,8 @@
 #   Tier 1.5 (Signal): Every 5 cycles (10s) — AT+QRSRP, AT+QRSRQ, AT+QSINR
 #   Tier 2 (Warm):   Every 15 cycles    — AT+QTEMP, AT+COPS?, AT+CPIN?, AT+QUIMSLOT?,
 #                                         AT+QCAINFO, AT+QNWCFG="*_time_advance",
-#                                         AT+QNWCFG="*_mimo_layers"
+#                                         AT+QNWCFG="*_mimo_layers",
+#                                         AT+CGCONTRDP, AT+QMAP="WWAN"
 #   Boot-only:     Once at startup    — AT+CVERSION, AT+CGSN, AT+CIMI, AT+QCCID,
 #                                       AT+CNUM, AT+QGETCAPABILITY
 #
@@ -82,6 +83,13 @@ t2_ca_active=false
 t2_ca_count=0
 t2_nr_ca_active=false
 t2_nr_ca_count=0
+t2_total_bandwidth_mhz=0
+t2_bandwidth_details=""
+t2_apn=""
+t2_primary_dns=""
+t2_secondary_dns=""
+t2_wan_ipv4=""
+t2_wan_ipv6=""
 t2_mimo=""
 
 # Tier 1 data (updated every cycle)
@@ -94,10 +102,18 @@ lte_rsrp=""
 lte_rsrq=""
 lte_sinr=""
 lte_rssi=""
+lte_cell_id=""
+lte_enodeb_id=""
+lte_sector_id=""
+lte_tac=""
 
 nr_state="unknown"
 nr_band=""
 nr_arfcn=""
+nr_cell_id=""
+nr_enodeb_id=""
+nr_sector_id=""
+nr_tac=""
 nr_pci=""
 nr_rsrp=""
 nr_rsrq=""
@@ -551,6 +567,8 @@ poll_tier2() {
         t2_ca_count=0
         t2_nr_ca_active=false
         t2_nr_ca_count=0
+        t2_total_bandwidth_mhz=0
+        t2_bandwidth_details=""
     fi
     sleep "$SIP_DELAY"
 
@@ -578,6 +596,27 @@ poll_tier2() {
     sleep "$SIP_DELAY"
     nr_mimo_result=$(qcmd_exec 'AT+QNWCFG="nr5g_mimo_layers"' 2>/dev/null)
     parse_mimo "$lte_mimo_result" "$nr_mimo_result"
+    sleep "$SIP_DELAY"
+
+    # APN + DNS — AT+CGCONTRDP (first non-IMS profile)
+    result=$(qcmd_exec 'AT+CGCONTRDP')
+    if [ $? -eq 0 ]; then
+        parse_cgcontrdp "$result"
+    else
+        t2_apn=""
+        t2_primary_dns=""
+        t2_secondary_dns=""
+    fi
+    sleep "$SIP_DELAY"
+
+    # WAN IP addresses — AT+QMAP="WWAN"
+    result=$(qcmd_exec 'AT+QMAP="WWAN"')
+    if [ $? -eq 0 ]; then
+        parse_wan_ip "$result"
+    else
+        t2_wan_ipv4=""
+        t2_wan_ipv6=""
+    fi
 }
 
 # =============================================================================
@@ -741,6 +780,10 @@ write_cache() {
     local json_lte_rssi="${lte_rssi:-null}"
     local json_lte_bandwidth="${lte_bandwidth:-null}"
     local json_lte_ta="${lte_ta:-null}"
+    local json_lte_cell_id="${lte_cell_id:-null}"
+    local json_lte_enodeb_id="${lte_enodeb_id:-null}"
+    local json_lte_sector_id="${lte_sector_id:-null}"
+    local json_lte_tac="${lte_tac:-null}"
 
     local json_nr_arfcn="${nr_arfcn:-null}"
     local json_nr_pci="${nr_pci:-null}"
@@ -749,6 +792,10 @@ write_cache() {
     local json_nr_sinr="${nr_sinr:-null}"
     local json_nr_scs="${nr_scs:-null}"
     local json_nr_ta="${nr_ta:-null}"
+    local json_nr_cell_id="${nr_cell_id:-null}"
+    local json_nr_enodeb_id="${nr_enodeb_id:-null}"
+    local json_nr_sector_id="${nr_sector_id:-null}"
+    local json_nr_tac="${nr_tac:-null}"
 
     local json_temperature="${t2_temperature:-null}"
 
@@ -772,7 +819,14 @@ write_cache() {
     "ca_active": ${t2_ca_active},
     "ca_count": ${t2_ca_count},
     "nr_ca_active": ${t2_nr_ca_active},
-    "nr_ca_count": ${t2_nr_ca_count}
+    "nr_ca_count": ${t2_nr_ca_count},
+    "total_bandwidth_mhz": ${t2_total_bandwidth_mhz:-0},
+    "bandwidth_details": "${t2_bandwidth_details}",
+    "apn": "${t2_apn}",
+    "wan_ipv4": "${t2_wan_ipv4}",
+    "wan_ipv6": "${t2_wan_ipv6}",
+    "primary_dns": "${t2_primary_dns}",
+    "secondary_dns": "${t2_secondary_dns}"
   },
   "lte": {
     "state": "${lte_state}",
@@ -780,6 +834,10 @@ write_cache() {
     "earfcn": ${json_lte_earfcn},
     "bandwidth": ${json_lte_bandwidth},
     "pci": ${json_lte_pci},
+    "cell_id": ${json_lte_cell_id},
+    "enodeb_id": ${json_lte_enodeb_id},
+    "sector_id": ${json_lte_sector_id},
+    "tac": ${json_lte_tac},
     "rsrp": ${json_lte_rsrp},
     "rsrq": ${json_lte_rsrq},
     "sinr": ${json_lte_sinr},
@@ -791,6 +849,10 @@ write_cache() {
     "band": "${nr_band}",
     "arfcn": ${json_nr_arfcn},
     "pci": ${json_nr_pci},
+    "cell_id": ${json_nr_cell_id},
+    "enodeb_id": ${json_nr_enodeb_id},
+    "sector_id": ${json_nr_sector_id},
+    "tac": ${json_nr_tac},
     "rsrp": ${json_nr_rsrp},
     "rsrq": ${json_nr_rsrq},
     "sinr": ${json_nr_sinr},

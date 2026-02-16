@@ -43,6 +43,31 @@ _antenna_line_to_json() {
         "$(printf '%s' "$csv" | cut -d',' -f4)"
 }
 
+# --- Hex-to-Decimal Cell ID Decomposition ------------------------------------
+# Converts a hex cell ID to decimal and computes eNodeB/gNodeB ID + Sector ID.
+# LTE (28-bit ECI): eNodeB ID = cell_id >> 8,  Sector ID = cell_id & 0xFF
+# NR  (36-bit NCI): gNodeB ID = cell_id >> 14, Sector ID = cell_id & 0x3FFF
+# Sets globals: _cid_dec, _cid_enb, _cid_sec
+# Args: $1=hex_cell_id, $2="nr" for NR bit-split (default: LTE)
+_compute_cell_parts() {
+    _cid_dec="" ; _cid_enb="" ; _cid_sec=""
+    [ -z "$1" ] && return
+    _cid_dec=$(printf '%d' "0x$1" 2>/dev/null) || { _cid_dec=""; return; }
+    if [ "$2" = "nr" ]; then
+        _cid_enb=$((_cid_dec / 16384))
+        _cid_sec=$((_cid_dec % 16384))
+    else
+        _cid_enb=$((_cid_dec / 256))
+        _cid_sec=$((_cid_dec % 256))
+    fi
+}
+
+# Converts a hex string (e.g. TAC) to decimal. Empty input → empty output.
+_hex_to_dec() {
+    [ -z "$1" ] && return
+    printf '%d' "0x$1" 2>/dev/null
+}
+
 # --- SCS Enum to kHz Mapping --------------------------------------------------
 map_scs_to_khz() {
     case "$1" in
@@ -59,8 +84,10 @@ map_scs_to_khz() {
 # Parse AT+QENG="servingcell"
 # Populates: lte_state, lte_band, lte_earfcn, lte_bandwidth, lte_pci,
 #            lte_rsrp, lte_rsrq, lte_sinr, lte_rssi,
+#            lte_cell_id, lte_enodeb_id, lte_sector_id, lte_tac,
 #            nr_state, nr_band, nr_arfcn, nr_pci, nr_rsrp, nr_rsrq, nr_sinr,
-#            nr_scs, network_type, service_status
+#            nr_scs, nr_cell_id, nr_enodeb_id, nr_sector_id, nr_tac,
+#            network_type, service_status
 # -----------------------------------------------------------------------------
 parse_serving_cell() {
     local raw="$1"
@@ -70,8 +97,10 @@ parse_serving_cell() {
     nr_state="unknown"
     lte_band="" ; lte_earfcn="" ; lte_bandwidth="" ; lte_pci=""
     lte_rsrp="" ; lte_rsrq="" ; lte_sinr="" ; lte_rssi=""
+    lte_cell_id="" ; lte_enodeb_id="" ; lte_sector_id="" ; lte_tac=""
     nr_band="" ; nr_arfcn="" ; nr_pci=""
     nr_rsrp="" ; nr_rsrq="" ; nr_sinr="" ; nr_scs=""
+    nr_cell_id="" ; nr_enodeb_id="" ; nr_sector_id="" ; nr_tac=""
 
     # Only keep +QENG: response lines (strip any residual echo/OK lines)
     raw=$(printf '%s\n' "$raw" | grep '^+QENG:')
@@ -116,12 +145,17 @@ parse_serving_cell() {
 
             # LTE,is_tdd,MCC,MNC,cellID,PCID,earfcn,freq_band_ind,UL_bw,DL_bw,TAC,RSRP,RSRQ,RSSI,SINR
             # 1   2      3   4   5      6    7      8              9     10    11  12   13   14   15
+            local raw_hex
+            raw_hex=$(printf '%s' "$csv" | cut -d',' -f5 | tr -d '\r')
+            _compute_cell_parts "$raw_hex"
+            lte_cell_id="$_cid_dec" ; lte_enodeb_id="$_cid_enb" ; lte_sector_id="$_cid_sec"
             lte_pci=$(printf '%s' "$csv" | cut -d',' -f6)
             lte_earfcn=$(printf '%s' "$csv" | cut -d',' -f7)
             local band_num
             band_num=$(printf '%s' "$csv" | cut -d',' -f8)
             lte_band="B${band_num}"
             lte_bandwidth=$(printf '%s' "$csv" | cut -d',' -f10)
+            lte_tac=$(_hex_to_dec "$(printf '%s' "$csv" | cut -d',' -f11 | tr -d '\r')")
             lte_rsrp=$(printf '%s' "$csv" | cut -d',' -f12)
             lte_rsrq=$(printf '%s' "$csv" | cut -d',' -f13)
             lte_rssi=$(printf '%s' "$csv" | cut -d',' -f14)
@@ -163,7 +197,12 @@ parse_serving_cell() {
 
         # servingcell,state,NR5G-SA,duplex,MCC,MNC,cellID,PCID,TAC,ARFCN,band,NR_DL_bw,RSRP,RSRQ,SINR,scs,srxlev
         # 1           2     3       4      5   6   7      8    9   10     11   12       13   14   15   16  17
+        local raw_hex
+        raw_hex=$(printf '%s' "$csv" | cut -d',' -f7 | tr -d '\r')
+        _compute_cell_parts "$raw_hex" "nr"
+        nr_cell_id="$_cid_dec" ; nr_enodeb_id="$_cid_enb" ; nr_sector_id="$_cid_sec"
         nr_pci=$(printf '%s' "$csv" | cut -d',' -f8)
+        nr_tac=$(_hex_to_dec "$(printf '%s' "$csv" | cut -d',' -f9 | tr -d '\r')")
         nr_arfcn=$(printf '%s' "$csv" | cut -d',' -f10)
         local nr_band_num
         nr_band_num=$(printf '%s' "$csv" | cut -d',' -f11)
@@ -199,12 +238,17 @@ parse_serving_cell() {
 
         # servingcell,state,LTE,is_tdd,MCC,MNC,cellID,PCID,earfcn,freq_band_ind,UL_bw,DL_bw,TAC,RSRP,RSRQ,RSSI,SINR,...
         # 1           2     3   4      5   6   7      8    9      10             11    12    13  14   15   16   17
+        local raw_hex
+        raw_hex=$(printf '%s' "$csv" | cut -d',' -f7 | tr -d '\r')
+        _compute_cell_parts "$raw_hex"
+        lte_cell_id="$_cid_dec" ; lte_enodeb_id="$_cid_enb" ; lte_sector_id="$_cid_sec"
         lte_pci=$(printf '%s' "$csv" | cut -d',' -f8)
         lte_earfcn=$(printf '%s' "$csv" | cut -d',' -f9)
         local band_num
         band_num=$(printf '%s' "$csv" | cut -d',' -f10)
         lte_band="B${band_num}"
         lte_bandwidth=$(printf '%s' "$csv" | cut -d',' -f12)
+        lte_tac=$(_hex_to_dec "$(printf '%s' "$csv" | cut -d',' -f13 | tr -d '\r')")
         lte_rsrp=$(printf '%s' "$csv" | cut -d',' -f14)
         lte_rsrq=$(printf '%s' "$csv" | cut -d',' -f15)
         lte_rssi=$(printf '%s' "$csv" | cut -d',' -f16)
@@ -364,14 +408,55 @@ parse_mimo() {
     fi
 }
 
+# --- LTE Resource Blocks → MHz Mapping ----------------------------------------
+# QCAINFO uses resource block counts for LTE bandwidth, not the enum used by
+# AT+QENG. Mapping per 3GPP 36.101 Table 5.6-1.
+_lte_rb_to_mhz() {
+    case "$1" in
+        6)   echo 1 ;;    # 1.4 MHz — round to 1 for integer math
+        15)  echo 3 ;;
+        25)  echo 5 ;;
+        50)  echo 10 ;;
+        75)  echo 15 ;;
+        100) echo 20 ;;
+        *)   echo 0 ;;
+    esac
+}
+
+# --- NR Bandwidth Enum → MHz Mapping ------------------------------------------
+# Same enum as AT+QENG NR_DL_bandwidth. Mapping per 3GPP 38.101.
+_nr_bw_to_mhz() {
+    case "$1" in
+        0)  echo 5 ;;
+        1)  echo 10 ;;
+        2)  echo 15 ;;
+        3)  echo 20 ;;
+        4)  echo 25 ;;
+        5)  echo 30 ;;
+        6)  echo 40 ;;
+        7)  echo 50 ;;
+        8)  echo 60 ;;
+        9)  echo 70 ;;
+        10) echo 80 ;;
+        11) echo 90 ;;
+        12) echo 100 ;;
+        13) echo 200 ;;
+        14) echo 400 ;;
+        15) echo 35 ;;
+        16) echo 45 ;;
+        *)  echo 0 ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
-# Parse AT+QCAINFO (Tier 2) — Carrier Aggregation status
-# Populates: t2_ca_active, t2_ca_count, t2_nr_ca_active, t2_nr_ca_count
+# Parse AT+QCAINFO (Tier 2) — Carrier Aggregation status + bandwidth
+# Populates: t2_ca_active, t2_ca_count, t2_nr_ca_active, t2_nr_ca_count,
+#            t2_total_bandwidth_mhz, t2_bandwidth_details
 # -----------------------------------------------------------------------------
 parse_ca_info() {
     local raw="$1"
 
-    # LTE SCC count (lines containing "LTE BAND")
+    # --- CA counts (existing logic) ---
     local lte_scc_count
     lte_scc_count=$(printf '%s\n' "$raw" | grep '+QCAINFO: "SCC"' | grep -c 'LTE BAND')
 
@@ -383,7 +468,6 @@ parse_ca_info() {
         t2_ca_count=0
     fi
 
-    # NR SCC count (lines containing "NR5G BAND" or "NRDC BAND")
     local nr_scc_count
     nr_scc_count=$(printf '%s\n' "$raw" | grep '+QCAINFO: "SCC"' | grep -c 'NR')
 
@@ -394,6 +478,75 @@ parse_ca_info() {
         t2_nr_ca_active=false
         t2_nr_ca_count=0
     fi
+
+    # --- Bandwidth extraction ---
+    # Parse every QCAINFO line (PCC + all SCCs) to sum total bandwidth
+    # and build a per-band breakdown string for the tooltip.
+    #
+    # LTE lines:  +QCAINFO: "PCC",<freq>,<bw_rb>,"LTE BAND X",...
+    # NR lines:   +QCAINFO: "SCC",<freq>,<bw_enum>,"NR5G BAND X",...
+    # SA PCC:     +QCAINFO: "PCC",<freq>,<bw_enum>,"NR5G BAND X",...
+    #
+    # Fields: type(1), freq(2), bandwidth(3), band_string(4), ...
+    # Band string is quoted, e.g. "LTE BAND 3" or "NR5G BAND 41"
+
+    local total_mhz=0
+    local details=""
+    local qca_lines
+    qca_lines=$(printf '%s\n' "$raw" | grep '^+QCAINFO:')
+
+    if [ -z "$qca_lines" ]; then
+        t2_total_bandwidth_mhz=0
+        t2_bandwidth_details=""
+        return
+    fi
+
+    # Process each QCAINFO line via file redirect (not pipe) to avoid
+    # the BusyBox subshell trap where piped while loops can't set globals.
+    local tmpfile="/tmp/qmanager_ca_parse.tmp"
+    printf '%s\n' "$qca_lines" > "$tmpfile"
+
+    while IFS= read -r line; do
+        local csv
+        csv=$(printf '%s' "$line" | sed 's/+QCAINFO: //g' | tr -d '\r')
+
+        local bw_raw
+        bw_raw=$(printf '%s' "$csv" | cut -d',' -f3 | tr -d ' ')
+
+        local band_str
+        band_str=$(printf '%s' "$csv" | cut -d',' -f4 | tr -d '"' | tr -d ' ')
+
+        local mhz=0
+        local band_short=""
+
+        case "$band_str" in
+            LTEBAND*)
+                mhz=$(_lte_rb_to_mhz "$bw_raw")
+                local band_num
+                band_num=$(printf '%s' "$band_str" | sed 's/LTEBAND//')
+                band_short="B${band_num}"
+                ;;
+            NR5GBAND*|NRDCBAND*)
+                mhz=$(_nr_bw_to_mhz "$bw_raw")
+                local band_num
+                band_num=$(printf '%s' "$band_str" | sed 's/NR5GBAND//;s/NRDCBAND//')
+                band_short="N${band_num}"
+                ;;
+        esac
+
+        if [ "$mhz" -gt 0 ] 2>/dev/null; then
+            total_mhz=$((total_mhz + mhz))
+            if [ -n "$details" ]; then
+                details="${details} + ${band_short}: ${mhz} MHz"
+            else
+                details="${band_short}: ${mhz} MHz"
+            fi
+        fi
+    done < "$tmpfile"
+    rm -f "$tmpfile"
+
+    t2_total_bandwidth_mhz=$total_mhz
+    t2_bandwidth_details="$details"
 }
 
 # -----------------------------------------------------------------------------
@@ -479,4 +632,97 @@ parse_qsinr() {
     nr_line=$(printf '%s\n' "$raw" | grep '+QSINR:.*NR5G' | head -1)
     sig_lte_sinr=$(_antenna_line_to_json "$lte_line" "QSINR")
     sig_nr_sinr=$(_antenna_line_to_json "$nr_line" "QSINR")
+}
+
+# =============================================================================
+# CELLULAR INFORMATION PARSERS (Tier 2)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Parse AT+CGCONTRDP — APN name and DNS servers
+# Uses the first non-IMS profile (skips lines where APN is "ims").
+#
+# Response format:
+#   +CGCONTRDP: <cid>,<bearer_id>,"<apn>","<local_addr>",<subnet>,"<dns_prim>","<dns_sec>"
+# Example:
+#   +CGCONTRDP: 1,5,"SMARTBRO","10.110.61.83",,"10.151.151.44","10.151.151.48"
+#   +CGCONTRDP: 2,6,"ims","36.4.216.0...",...
+#
+# Populates: t2_apn, t2_primary_dns, t2_secondary_dns
+# -----------------------------------------------------------------------------
+parse_cgcontrdp() {
+    local raw="$1"
+
+    t2_apn=""
+    t2_primary_dns=""
+    t2_secondary_dns=""
+
+    # Get +CGCONTRDP lines, exclude IMS profile (case-insensitive)
+    local data_line
+    data_line=$(printf '%s\n' "$raw" | grep '^+CGCONTRDP:' | grep -iv '"ims"' | head -1)
+
+    if [ -z "$data_line" ]; then
+        qlog_debug "parse_cgcontrdp: no non-IMS CGCONTRDP line found"
+        return
+    fi
+
+    local csv
+    csv=$(printf '%s' "$data_line" | sed 's/+CGCONTRDP: //g' | tr -d '\r')
+
+    # Field 3: APN (quoted)
+    t2_apn=$(printf '%s' "$csv" | cut -d',' -f3 | tr -d '"' | tr -d ' ')
+
+    # Field 6: Primary DNS (quoted)
+    t2_primary_dns=$(printf '%s' "$csv" | cut -d',' -f6 | tr -d '"' | tr -d ' ')
+
+    # Field 7: Secondary DNS (quoted)
+    t2_secondary_dns=$(printf '%s' "$csv" | cut -d',' -f7 | tr -d '"' | tr -d ' ')
+}
+
+# -----------------------------------------------------------------------------
+# Parse AT+QMAP="WWAN" — WAN IPv4 and IPv6 addresses
+#
+# Response format:
+#   +QMAP: "WWAN",<connected>,<mux_id>,"IPV4","<ipv4_addr>"
+#   +QMAP: "WWAN",<connected>,<mux_id>,"IPV6","<ipv6_addr>"
+# Example:
+#   +QMAP: "WWAN",1,1,"IPV4","10.110.61.83"
+#   +QMAP: "WWAN",0,1,"IPV6","0:0:0:0:0:0:0:0"
+#
+# IPv6 "0:0:0:0:0:0:0:0" (all zeros) means no IPv6 assigned.
+#
+# Populates: t2_wan_ipv4, t2_wan_ipv6
+# -----------------------------------------------------------------------------
+parse_wan_ip() {
+    local raw="$1"
+
+    t2_wan_ipv4=""
+    t2_wan_ipv6=""
+
+    # IPv4 line
+    local ipv4_line
+    ipv4_line=$(printf '%s\n' "$raw" | grep '+QMAP:' | grep '"IPV4"' | head -1)
+
+    if [ -n "$ipv4_line" ]; then
+        local csv
+        csv=$(printf '%s' "$ipv4_line" | sed 's/+QMAP: //g' | tr -d '\r')
+        t2_wan_ipv4=$(printf '%s' "$csv" | cut -d',' -f5 | tr -d '"' | tr -d ' ')
+    fi
+
+    # IPv6 line
+    local ipv6_line
+    ipv6_line=$(printf '%s\n' "$raw" | grep '+QMAP:' | grep '"IPV6"' | head -1)
+
+    if [ -n "$ipv6_line" ]; then
+        local csv
+        csv=$(printf '%s' "$ipv6_line" | sed 's/+QMAP: //g' | tr -d '\r')
+        local ipv6_val
+        ipv6_val=$(printf '%s' "$csv" | cut -d',' -f5 | tr -d '"' | tr -d ' ')
+
+        # All-zeros means no IPv6 assigned
+        case "$ipv6_val" in
+            0:0:0:0:0:0:0:0|::|0::0|'') t2_wan_ipv6="" ;;
+            *) t2_wan_ipv6="$ipv6_val" ;;
+        esac
+    fi
 }

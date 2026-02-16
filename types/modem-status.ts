@@ -91,6 +91,20 @@ export interface NetworkStatus {
   nr_ca_active: boolean;
   /** Number of NR secondary carriers (NR SCC count) */
   nr_ca_count: number;
+  /** Total aggregated bandwidth in MHz (PCC + all SCCs, from AT+QCAINFO) */
+  total_bandwidth_mhz: number;
+  /** Per-band bandwidth breakdown for tooltip, e.g. "B3: 15 MHz + N41: 100 MHz" */
+  bandwidth_details: string;
+  /** Active APN name from AT+CGCONTRDP (first non-IMS profile) */
+  apn: string;
+  /** WAN IPv4 address from AT+QMAP="WWAN" */
+  wan_ipv4: string;
+  /** WAN IPv6 address from AT+QMAP="WWAN" (empty string if not assigned) */
+  wan_ipv6: string;
+  /** Primary DNS server from AT+CGCONTRDP */
+  primary_dns: string;
+  /** Secondary DNS server from AT+CGCONTRDP */
+  secondary_dns: string;
 }
 
 export interface LteStatus {
@@ -104,6 +118,14 @@ export interface LteStatus {
   bandwidth: number | null;
   /** Physical Cell ID */
   pci: number | null;
+  /** Cell ID (28-bit E-UTRAN Cell Identity) as decimal */
+  cell_id: number | null;
+  /** eNodeB ID — top 20 bits of Cell ID (cell_id >> 8) */
+  enodeb_id: number | null;
+  /** Sector ID — bottom 8 bits of Cell ID (cell_id & 0xFF) */
+  sector_id: number | null;
+  /** Tracking Area Code as decimal */
+  tac: number | null;
   /** Reference Signal Received Power (dBm) — always a negative number */
   rsrp: number | null;
   /** Reference Signal Received Quality (dB) — always a negative number */
@@ -125,6 +147,14 @@ export interface NrStatus {
   arfcn: number | null;
   /** Physical Cell ID */
   pci: number | null;
+  /** Cell ID (36-bit NR Cell Identity) as decimal. Only populated in SA mode. */
+  cell_id: number | null;
+  /** gNodeB ID — top 22 bits of Cell ID (cell_id >> 14). Only populated in SA mode. */
+  enodeb_id: number | null;
+  /** Sector ID — bottom 14 bits of Cell ID (cell_id & 0x3FFF). Only populated in SA mode. */
+  sector_id: number | null;
+  /** Tracking Area Code as decimal. Only populated in SA mode. */
+  tac: number | null;
   /** Reference Signal Received Power (dBm) */
   rsrp: number | null;
   /** Reference Signal Received Quality (dB) */
@@ -458,6 +488,16 @@ export function formatTimeAgo(timestamp: number): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// --- Cell ID / TAC Display Utilities -----------------------------------------
+
+/**
+ * Formats a nullable number for display, returning "-" for null/undefined.
+ * Used for Cell ID, eNodeB ID, Sector ID, TAC, and similar numeric fields.
+ */
+export function formatNumericField(value: number | null | undefined): string {
+  return value != null ? value.toString() : "-";
 }
 
 /**

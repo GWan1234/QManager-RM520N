@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 16, 2026 (Home Page Complete — All Components Wired)
+**Last Updated:** February 16, 2026 (Cellular Information Card Wired)
 
 ---
 
@@ -12,13 +12,13 @@
 2. [Files Created & Deployment Map](#2-files-created--deployment-map)
 3. [AT Command Reference (Verified)](#3-at-command-reference-verified)
 4. [JSON Data Contract](#4-json-data-contract)
-5. [Component Wiring Progress](#5-component-wiring-progress)
-6. [Deployment Notes](#6-deployment-notes)
-7. [Platform Quirks & Lessons Learned](#7-platform-quirks--lessons-learned)
-8. [Remaining Work](#8-remaining-work)
-9. [TA Debugging Notes (Resolved)](#9-ta-debugging-notes-resolved-)
-10. [Connectivity Architecture Reference](#10-connectivity-architecture-reference)
-11. [Speedtest Architecture Reference](#11-speedtest-architecture-reference)
+5. [Deployment Notes](#5-deployment-notes)
+6. [Platform Quirks & Lessons Learned](#6-platform-quirks--lessons-learned)
+7. [Resolved Debugging Notes](#7-resolved-debugging-notes)
+8. [Connectivity Architecture Reference](#8-connectivity-architecture-reference)
+9. [Speedtest Architecture Reference](#9-speedtest-architecture-reference)
+
+**See also:** `TASKS.md` — Component wiring progress, remaining work, and active task tracker.
 
 ---
 
