@@ -8,7 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-import { CardSimIcon, RefreshCcwIcon } from "lucide-react";
+import { SmartphoneIcon, RefreshCcwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -19,32 +19,38 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 
-const EmptyProfileViewComponent = () => {
+interface EmptyProfileViewProps {
+  onRefresh?: () => void;
+}
+
+const EmptyProfileViewComponent = ({ onRefresh }: EmptyProfileViewProps) => {
   return (
     <Card className="@container/card">
       <CardHeader>
-        <CardTitle>View Custom Profiles</CardTitle>
+        <CardTitle>Saved Profiles</CardTitle>
         <CardDescription>
-          Manage your custom cellular profiles here.
+          Manage your custom SIM profiles here.
         </CardDescription>
       </CardHeader>
       <CardContent className="h-full flex items-center justify-center">
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <CardSimIcon />
+              <SmartphoneIcon />
             </EmptyMedia>
             <EmptyTitle>No Custom Profiles</EmptyTitle>
             <EmptyDescription>
-              You have not created any custom SIM profiles yet. Click the button
-              below to refresh or create a new profile.
+              You have not created any custom SIM profiles yet. Use the form to
+              create your first profile.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button variant="outline" size="sm">
-              <RefreshCcwIcon />
-              Refresh
-            </Button>
+            {onRefresh && (
+              <Button variant="outline" size="sm" onClick={onRefresh}>
+                <RefreshCcwIcon className="mr-1 h-3.5 w-3.5" />
+                Refresh
+              </Button>
+            )}
           </EmptyContent>
         </Empty>
       </CardContent>

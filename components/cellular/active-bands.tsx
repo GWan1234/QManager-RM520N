@@ -33,7 +33,6 @@ import {
   getBandName,
   getDuplexMode,
 } from "@/lib/earfcn";
-import { TbCircleArrowDownFilled, TbCircleArrowUpFilled } from "react-icons/tb";
 
 // =============================================================================
 // Props
@@ -47,24 +46,6 @@ interface ActiveBandsComponentProps {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-/** Quality level → tailwind color class for progress bar indicator */
-function qualityColor(
-  quality: "excellent" | "good" | "fair" | "poor" | "none",
-): string {
-  switch (quality) {
-    case "excellent":
-      return "text-green-500";
-    case "good":
-      return "text-blue-500";
-    case "fair":
-      return "text-yellow-500";
-    case "poor":
-      return "text-red-500";
-    default:
-      return "text-muted-foreground";
-  }
-}
 
 /** Technology badge styling */
 function techBadgeClass(tech: "LTE" | "NR"): string {
@@ -89,7 +70,6 @@ function SignalRow({
   value,
   unit,
   progress,
-  quality,
 }: {
   label: string;
   value: number | null;
