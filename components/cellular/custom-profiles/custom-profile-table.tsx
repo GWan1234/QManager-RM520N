@@ -6,6 +6,7 @@ import {
   TbDotsVertical,
   TbEdit,
   TbPlayerPlay,
+  TbPlayerStop,
   TbTrash,
 } from "react-icons/tb";
 import {
@@ -60,6 +61,7 @@ interface ProfileTableProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => Promise<boolean>;
   onActivate?: (id: string) => void;
+  onDeactivate?: () => void;
 }
 
 export function ProfileTable({
@@ -68,6 +70,7 @@ export function ProfileTable({
   onEdit,
   onDelete,
   onActivate,
+  onDeactivate,
 }: ProfileTableProps) {
   const [deleteTarget, setDeleteTarget] = React.useState<ProfileSummary | null>(
     null
@@ -161,6 +164,12 @@ export function ProfileTable({
                   Activate
                 </DropdownMenuItem>
               )}
+              {onDeactivate && row.original.id === activeProfileId && (
+                <DropdownMenuItem onClick={onDeactivate}>
+                  <TbPlayerStop className="mr-2 h-4 w-4" />
+                  Deactivate
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
@@ -174,7 +183,7 @@ export function ProfileTable({
         ),
       },
     ],
-    [activeProfileId, onEdit, onActivate]
+    [activeProfileId, onEdit, onActivate, onDeactivate]
   );
 
   const table = useReactTable({

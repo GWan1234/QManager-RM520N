@@ -40,6 +40,7 @@ const CustomProfileComponent = () => {
     createProfile,
     updateProfile,
     deleteProfile,
+    deactivateProfile,
     getProfile,
     refresh,
   } = useSimProfiles();
@@ -62,6 +63,10 @@ const CustomProfileComponent = () => {
     name: string;
   } | null>(null);
   const [showApplyProgress, setShowApplyProgress] = useState(false);
+
+  // Deactivate confirmation state
+  const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [isDeactivating, setIsDeactivating] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Handle Edit: fetch full profile, switch form to edit mode
@@ -145,6 +150,20 @@ const CustomProfileComponent = () => {
   }, [resetApply, refresh]);
 
   // ---------------------------------------------------------------------------
+  // Handle Deactivate: show confirmation → clear active marker
+  // ---------------------------------------------------------------------------
+  const handleDeactivateRequest = useCallback(() => {
+    setShowDeactivateConfirm(true);
+  }, []);
+
+  const handleDeactivateConfirm = useCallback(async () => {
+    setIsDeactivating(true);
+    await deactivateProfile();
+    setIsDeactivating(false);
+    setShowDeactivateConfirm(false);
+  }, [deactivateProfile]);
+
+  // ---------------------------------------------------------------------------
   // Handle "Load Current Settings" from the form
   // ---------------------------------------------------------------------------
   const handleLoadCurrentSettings = useCallback(() => {
@@ -177,6 +196,7 @@ const CustomProfileComponent = () => {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onActivate={handleActivateRequest}
+          onDeactivate={handleDeactivateRequest}
           onRefresh={refresh}
         />
       </div>
@@ -199,6 +219,34 @@ const CustomProfileComponent = () => {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleActivateConfirm}>
               Activate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Deactivate Confirmation Dialog */}
+      <AlertDialog
+        open={showDeactivateConfirm}
+        onOpenChange={(open) => !open && !isDeactivating && setShowDeactivateConfirm(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate Profile</AlertDialogTitle>
+            <AlertDialogDescription>
+              Clear the active profile marker? The modem&apos;s current settings
+              (APN, IMEI, TTL) will not be reverted — only the &ldquo;Active&rdquo;
+              badge will be removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeactivating}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeactivateConfirm}
+              disabled={isDeactivating}
+            >
+              {isDeactivating ? "Deactivating…" : "Deactivate"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

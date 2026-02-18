@@ -94,11 +94,6 @@ export function ApplyProgressDialog({
             Applying Profile
             {applyState && statusBadge(applyState.status)}
           </DialogTitle>
-          <DialogDescription>
-            {applyState
-              ? `"${applyState.profile_name}" — Step ${applyState.current_step} of ${applyState.total_steps}`
-              : error || "Starting…"}
-          </DialogDescription>
         </DialogHeader>
 
         {/* Step list */}

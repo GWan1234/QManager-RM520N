@@ -43,6 +43,8 @@ export interface UseSimProfilesReturn {
   deleteProfile: (id: string) => Promise<boolean>;
   /** Fetch a single profile by ID (full data for edit form). */
   getProfile: (id: string) => Promise<SimProfile | null>;
+  /** Deactivate the current active profile (clears marker only, no modem changes). */
+  deactivateProfile: () => Promise<boolean>;
   /** Manually refresh the profile list */
   refresh: () => void;
 }
@@ -225,6 +227,39 @@ export function useSimProfiles(): UseSimProfilesReturn {
   );
 
   // ---------------------------------------------------------------------------
+  // Deactivate active profile
+  // ---------------------------------------------------------------------------
+  const deactivateProfile = useCallback(async (): Promise<boolean> => {
+    setError(null);
+    try {
+      const resp = await fetch(`${CGI_BASE}/deactivate.sh`, {
+        method: "POST",
+      });
+
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+      }
+
+      const result: ProfileApiResponse = await resp.json();
+
+      if (!result.success) {
+        setError(
+          result.detail || result.error || "Failed to deactivate profile"
+        );
+        return false;
+      }
+
+      await fetchProfiles();
+      return true;
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to deactivate profile";
+      setError(msg);
+      return false;
+    }
+  }, [fetchProfiles]);
+
+  // ---------------------------------------------------------------------------
   // Get single profile (for edit form)
   // ---------------------------------------------------------------------------
   const getProfile = useCallback(
@@ -271,6 +306,7 @@ export function useSimProfiles(): UseSimProfilesReturn {
     createProfile,
     updateProfile,
     deleteProfile,
+    deactivateProfile,
     getProfile,
     refresh,
   };
