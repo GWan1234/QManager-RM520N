@@ -4,26 +4,21 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   ScenarioActiveResponse,
   ScenarioActivateResponse,
+  ScenarioConfig,
 } from "@/types/connection-scenario";
 
 // =============================================================================
 // useConnectionScenarios — Active Scenario State & Activation Hook
 // =============================================================================
 // Manages which connection scenario is active and handles activation
-// (sending the network mode AT command to the modem).
-//
-// This hook does NOT manage scenario definitions (icons, gradients, patterns)
-// — those are UI concerns owned by the component layer.
+// (sending network mode + band lock AT commands to the modem).
 //
 // Backend endpoints:
 //   GET  /cgi-bin/quecmanager/scenarios/active.sh    → active scenario ID
 //   POST /cgi-bin/quecmanager/scenarios/activate.sh  → apply scenario
 //
-// Usage:
-//   const {
-//     activeScenarioId, isLoading, isActivating, error,
-//     activateScenario, refresh
-//   } = useConnectionScenarios();
+// For default scenarios, only the ID is needed (backend knows the config).
+// For custom scenarios, the full config (mode + bands) is sent in the body.
 // =============================================================================
 
 const CGI_BASE = "/cgi-bin/quecmanager/scenarios";
@@ -37,8 +32,12 @@ export interface UseConnectionScenariosReturn {
   isActivating: boolean;
   /** Error message from the last operation */
   error: string | null;
-  /** Activate a scenario by ID. Returns success boolean. */
-  activateScenario: (id: string) => Promise<boolean>;
+  /**
+   * Activate a scenario by ID.
+   * For custom scenarios, pass the config so mode + bands are sent to backend.
+   * Returns success boolean.
+   */
+  activateScenario: (id: string, config?: ScenarioConfig) => Promise<boolean>;
   /** Manually refresh the active scenario state */
   refresh: () => void;
 }
@@ -76,7 +75,7 @@ export function useConnectionScenarios(): UseConnectionScenariosReturn {
     } catch (err) {
       if (!mountedRef.current) return;
       setError(
-        err instanceof Error ? err.message : "Failed to load active scenario"
+        err instanceof Error ? err.message : "Failed to load active scenario",
       );
     } finally {
       if (mountedRef.current) {
@@ -94,15 +93,26 @@ export function useConnectionScenarios(): UseConnectionScenariosReturn {
   // Activate a scenario
   // ---------------------------------------------------------------------------
   const activateScenario = useCallback(
-    async (id: string): Promise<boolean> => {
+    async (id: string, config?: ScenarioConfig): Promise<boolean> => {
       setError(null);
       setIsActivating(true);
 
       try {
+        // Build POST body — default scenarios only need id,
+        // custom scenarios include full config for backend to apply
+        const body: Record<string, string> = { id };
+
+        if (config && id.startsWith("custom-")) {
+          body.mode = config.atModeValue;
+          if (config.lte_bands) body.lte_bands = config.lte_bands;
+          if (config.nsa_nr_bands) body.nsa_nr_bands = config.nsa_nr_bands;
+          if (config.sa_nr_bands) body.sa_nr_bands = config.sa_nr_bands;
+        }
+
         const resp = await fetch(`${CGI_BASE}/activate.sh`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id }),
+          body: JSON.stringify(body),
         });
 
         if (!resp.ok) {
@@ -125,7 +135,7 @@ export function useConnectionScenarios(): UseConnectionScenariosReturn {
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to activate scenario"
+            : "Failed to activate scenario",
         );
         return false;
       } finally {
@@ -134,7 +144,7 @@ export function useConnectionScenarios(): UseConnectionScenariosReturn {
         }
       }
     },
-    []
+    [],
   );
 
   // ---------------------------------------------------------------------------

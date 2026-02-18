@@ -12,20 +12,64 @@
 //   Active scenario: /etc/qmanager/active_scenario
 //   Activate endpoint: POST /cgi-bin/quecmanager/scenarios/activate.sh
 //   Status endpoint:   GET  /cgi-bin/quecmanager/scenarios/active.sh
-//
-// See: CUSTOM_SIM_PROFILE_ARCHITECTURE_v2.md (Connection Scenarios section)
 // =============================================================================
+
+// --- Network Mode Options ----------------------------------------------------
+
+export const NETWORK_MODE_OPTIONS = [
+  { label: "Auto", value: "AUTO" },
+  { label: "LTE Only", value: "LTE" },
+  { label: "5G SA Only", value: "NR5G" },
+  { label: "5G SA / NSA", value: "LTE:NR5G" },
+] as const;
+
+/** Map AT mode_pref value → display label */
+export function modeValueToLabel(atValue: string): string {
+  return (
+    NETWORK_MODE_OPTIONS.find((o) => o.value === atValue)?.label ?? atValue
+  );
+}
+
+// --- Band Format Helpers -----------------------------------------------------
+
+/** Colon-delimited storage → comma-separated display ("1:3:7" → "1, 3, 7") */
+export function bandsToDisplay(colonDelimited: string): string {
+  if (!colonDelimited) return "Auto";
+  return colonDelimited.split(":").join(", ");
+}
+
+/** Comma-separated input → colon-delimited storage ("1, 3, 7" → "1:3:7") */
+export function inputToBands(commaInput: string): string {
+  if (!commaInput.trim()) return "";
+  return commaInput
+    .split(",")
+    .map((b) => b.trim())
+    .filter(Boolean)
+    .join(":");
+}
+
+/** Colon-delimited storage → comma-separated input ("1:3:7" → "1, 3, 7") */
+export function bandsToInput(colonDelimited: string): string {
+  if (!colonDelimited) return "";
+  return colonDelimited.split(":").join(", ");
+}
 
 // --- Scenario Data Model -----------------------------------------------------
 
 /** Configuration settings for a connection scenario */
 export interface ScenarioConfig {
-  /** Display-friendly band list (e.g., ["Auto"], ["N41", "N78"]) */
-  bands: string[];
-  /** Display-friendly network mode (e.g., "Auto", "5G SA Preferred") */
+  /** AT command value for mode_pref: "AUTO" | "LTE" | "NR5G" | "LTE:NR5G" */
+  atModeValue: string;
+  /** Display-friendly network mode label (e.g., "Auto", "5G SA Only") */
   mode: string;
   /** Display-friendly optimization label (e.g., "Balanced", "Latency") */
   optimization: string;
+  /** LTE bands, colon-delimited (e.g., "1:3:7:28"). Empty = Auto. */
+  lte_bands: string;
+  /** NR5G NSA bands, colon-delimited (e.g., "41:78"). Empty = Auto. */
+  nsa_nr_bands: string;
+  /** NR5G SA bands, colon-delimited (e.g., "41:78"). Empty = Auto. */
+  sa_nr_bands: string;
 }
 
 /** Full connection scenario definition */
@@ -40,15 +84,10 @@ export interface ConnectionScenario {
   gradient: string;
   /** SVG pattern type for the card overlay */
   pattern: "balanced" | "gaming" | "streaming" | "custom";
-  /** Scenario configuration (display values) */
+  /** Scenario configuration */
   config: ScenarioConfig;
   /** Whether this is a built-in default (cannot be deleted/edited) */
   isDefault: boolean;
-  /**
-   * AT command value for AT+QNWPREFCFG="mode_pref".
-   * null means "no override" (used by Balanced).
-   */
-  atModeValue: string;
 }
 
 // --- Default Scenarios -------------------------------------------------------
@@ -61,12 +100,14 @@ export const DEFAULT_SCENARIOS: ConnectionScenario[] = [
     gradient: "from-emerald-500 via-teal-500 to-cyan-500",
     pattern: "balanced",
     config: {
-      bands: ["Auto"],
+      atModeValue: "AUTO",
       mode: "Auto",
       optimization: "Balanced",
+      lte_bands: "",
+      nsa_nr_bands: "",
+      sa_nr_bands: "",
     },
     isDefault: true,
-    atModeValue: "AUTO",
   },
   {
     id: "gaming",
@@ -75,12 +116,14 @@ export const DEFAULT_SCENARIOS: ConnectionScenario[] = [
     gradient: "from-violet-600 via-purple-600 to-indigo-700",
     pattern: "gaming",
     config: {
-      bands: ["Auto"],
+      atModeValue: "NR5G",
       mode: "5G SA Only",
       optimization: "Latency",
+      lte_bands: "",
+      nsa_nr_bands: "",
+      sa_nr_bands: "",
     },
     isDefault: true,
-    atModeValue: "NR5G",
   },
   {
     id: "streaming",
@@ -89,30 +132,45 @@ export const DEFAULT_SCENARIOS: ConnectionScenario[] = [
     gradient: "from-rose-500 via-pink-500 to-orange-400",
     pattern: "streaming",
     config: {
-      bands: ["Auto"],
+      atModeValue: "LTE:NR5G",
       mode: "5G SA / NSA",
       optimization: "Throughput",
+      lte_bands: "",
+      nsa_nr_bands: "",
+      sa_nr_bands: "",
     },
     isDefault: true,
-    atModeValue: "LTE:NR5G",
   },
 ];
 
-// --- API Response Types ------------------------------------------------------
+// --- API Types ---------------------------------------------------------------
 
 /** Response from GET /cgi-bin/quecmanager/scenarios/active.sh */
 export interface ScenarioActiveResponse {
-  /** Currently active scenario ID, or "balanced" if none set */
   active_scenario_id: string;
 }
 
 /** Response from POST /cgi-bin/quecmanager/scenarios/activate.sh */
 export interface ScenarioActivateResponse {
   success: boolean;
-  /** Activated scenario ID */
   id?: string;
-  /** Error code on failure */
   error?: string;
-  /** Human-readable error detail */
   detail?: string;
+}
+
+/**
+ * POST body for activation.
+ * Default scenarios: only `id` is needed (backend knows the config).
+ * Custom scenarios: full config is sent in the body.
+ */
+export interface ScenarioActivateRequest {
+  id: string;
+  /** AT mode_pref value — required for custom scenarios */
+  mode?: string;
+  /** Colon-delimited LTE bands — omit to leave unchanged */
+  lte_bands?: string;
+  /** Colon-delimited NR NSA bands — omit to leave unchanged */
+  nsa_nr_bands?: string;
+  /** Colon-delimited NR SA bands — omit to leave unchanged */
+  sa_nr_bands?: string;
 }

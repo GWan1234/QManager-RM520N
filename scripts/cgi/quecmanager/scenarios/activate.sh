@@ -2,20 +2,21 @@
 # =============================================================================
 # activate.sh — CGI Endpoint: Activate Connection Scenario
 # =============================================================================
-# Applies a connection scenario's network mode to the modem via qcmd.
-# Synchronous — single AT command (~200ms), returns result immediately.
+# Applies a connection scenario's network mode and band locks to the modem.
+# Synchronous — typically 1-4 AT commands (~200ms each), returns result.
 #
-# Scenario → AT command mapping:
-#   balanced  → AT+QNWPREFCFG="mode_pref",AUTO     (modem decides)
-#   gaming    → AT+QNWPREFCFG="mode_pref",NR5G     (SA only)
-#   streaming → AT+QNWPREFCFG="mode_pref",LTE:NR5G (SA + NSA)
-#   custom-*  → (future: read from /etc/qmanager/scenarios/<id>.json)
+# Default scenarios (balanced/gaming/streaming):
+#   Only mode_pref is sent. Bands are left unchanged (user controls via
+#   Band Locking page).
+#   POST body: {"id":"gaming"}
+#
+# Custom scenarios (custom-*):
+#   Mode + band locks sent from frontend config.
+#   POST body: {"id":"custom-123","mode":"NR5G","lte_bands":"1:3:7",
+#               "nsa_nr_bands":"41:78","sa_nr_bands":"41:78"}
+#   Empty/missing band fields → AT command skipped (leave current setting).
 #
 # Endpoint: POST /cgi-bin/quecmanager/scenarios/activate.sh
-# Request body: {"id": "<scenario_id>"}
-# Response: {"success":true,"id":"<scenario_id>"}
-#       or: {"success":false,"error":"...","detail":"..."}
-#
 # Install location: /www/cgi-bin/quecmanager/scenarios/activate.sh
 # =============================================================================
 
@@ -58,16 +59,50 @@ else
     exit 0
 fi
 
-# --- Extract scenario ID from JSON body --------------------------------------
-SCENARIO_ID=$(echo "$POST_DATA" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+# --- Parse JSON fields from POST body ----------------------------------------
+# Using sed — no jq on BusyBox
+json_field() {
+    echo "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
+}
+
+SCENARIO_ID=$(json_field "id")
 
 if [ -z "$SCENARIO_ID" ]; then
     echo '{"success":false,"error":"no_id","detail":"Missing id field in request body"}'
     exit 0
 fi
 
-# --- Map scenario ID to AT mode_pref value -----------------------------------
+# --- Helper: send AT command via qcmd, check response ------------------------
+send_at() {
+    local cmd="$1"
+    local label="$2"
+
+    local result
+    result=$(qcmd "$cmd" 2>/dev/null)
+    local rc=$?
+
+    if [ $rc -ne 0 ] || [ -z "$result" ]; then
+        qlog_error "$label: AT command failed (rc=$rc): $cmd"
+        return 1
+    fi
+
+    case "$result" in
+        *ERROR*)
+            qlog_error "$label: AT returned ERROR: $cmd -> $result"
+            return 1
+            ;;
+    esac
+
+    qlog_info "$label: OK"
+    return 0
+}
+
+# --- Map scenario ID to AT commands ------------------------------------------
 AT_MODE=""
+LTE_BANDS=""
+NSA_NR_BANDS=""
+SA_NR_BANDS=""
+
 case "$SCENARIO_ID" in
     balanced)
         AT_MODE="AUTO"
@@ -79,10 +114,25 @@ case "$SCENARIO_ID" in
         AT_MODE="LTE:NR5G"
         ;;
     custom-*)
-        # Future: read mode from /etc/qmanager/scenarios/<id>.json
-        # For now, custom scenarios are not supported for activation
-        echo '{"success":false,"error":"not_implemented","detail":"Custom scenario activation not yet supported"}'
-        exit 0
+        # Custom scenario: read config from POST body
+        AT_MODE=$(json_field "mode")
+        LTE_BANDS=$(json_field "lte_bands")
+        NSA_NR_BANDS=$(json_field "nsa_nr_bands")
+        SA_NR_BANDS=$(json_field "sa_nr_bands")
+
+        if [ -z "$AT_MODE" ]; then
+            echo '{"success":false,"error":"no_mode","detail":"Custom scenario requires mode field"}'
+            exit 0
+        fi
+
+        # Validate mode value
+        case "$AT_MODE" in
+            AUTO|LTE|NR5G|LTE:NR5G) ;;
+            *)
+                echo '{"success":false,"error":"invalid_mode","detail":"Invalid mode value"}'
+                exit 0
+                ;;
+        esac
         ;;
     *)
         echo '{"success":false,"error":"invalid_id","detail":"Unknown scenario ID"}'
@@ -90,32 +140,48 @@ case "$SCENARIO_ID" in
         ;;
 esac
 
-qlog_info "Activating scenario: $SCENARIO_ID (mode_pref=$AT_MODE)"
+qlog_info "Activating scenario: $SCENARIO_ID (mode=$AT_MODE, lte=$LTE_BANDS, nsa=$NSA_NR_BANDS, sa=$SA_NR_BANDS)"
 
-# --- Send AT command via qcmd ------------------------------------------------
-AT_CMD="AT+QNWPREFCFG=\"mode_pref\",${AT_MODE}"
-RESULT=$(qcmd "$AT_CMD" 2>/dev/null)
-RC=$?
+# --- Step 1: Set network mode ------------------------------------------------
+FAILED=""
 
-# Check for failure
-if [ $RC -ne 0 ] || [ -z "$RESULT" ]; then
-    qlog_error "AT command failed (rc=$RC): $AT_CMD"
-    echo '{"success":false,"error":"modem_error","detail":"Failed to send AT command to modem"}'
+if ! send_at "AT+QNWPREFCFG=\"mode_pref\",${AT_MODE}" "mode_pref"; then
+    echo '{"success":false,"error":"modem_error","detail":"Failed to set network mode"}'
     exit 0
 fi
 
-# Check for ERROR in response
-case "$RESULT" in
-    *ERROR*)
-        qlog_error "AT command returned ERROR: $AT_CMD -> $RESULT"
-        echo '{"success":false,"error":"at_error","detail":"Modem rejected the network mode command"}'
-        exit 0
-        ;;
-esac
+# --- Step 2: Set band locks (custom scenarios only, skip empty) ---------------
+if [ -n "$LTE_BANDS" ]; then
+    sleep 0.2
+    if ! send_at "AT+QNWPREFCFG=\"lte_band\",${LTE_BANDS}" "lte_band"; then
+        FAILED="lte_band"
+    fi
+fi
+
+if [ -n "$NSA_NR_BANDS" ]; then
+    sleep 0.2
+    if ! send_at "AT+QNWPREFCFG=\"nsa_nr5g_band\",${NSA_NR_BANDS}" "nsa_nr5g_band"; then
+        FAILED="${FAILED:+$FAILED,}nsa_nr5g_band"
+    fi
+fi
+
+if [ -n "$SA_NR_BANDS" ]; then
+    sleep 0.2
+    if ! send_at "AT+QNWPREFCFG=\"nr5g_band\",${SA_NR_BANDS}" "nr5g_band"; then
+        FAILED="${FAILED:+$FAILED,}nr5g_band"
+    fi
+fi
 
 # --- Persist active scenario to flash ----------------------------------------
 mkdir -p "$(dirname "$ACTIVE_SCENARIO_FILE")" 2>/dev/null
 printf '%s' "$SCENARIO_ID" > "$ACTIVE_SCENARIO_FILE"
 
-qlog_info "Scenario activated: $SCENARIO_ID"
-printf '{"success":true,"id":"%s"}\n' "$SCENARIO_ID"
+# --- Response -----------------------------------------------------------------
+if [ -n "$FAILED" ]; then
+    qlog_warn "Scenario activated with partial band lock failure: $FAILED"
+    printf '{"success":true,"id":"%s","warning":"partial_band_lock","detail":"Band lock failed for: %s"}\n' \
+        "$SCENARIO_ID" "$FAILED"
+else
+    qlog_info "Scenario activated: $SCENARIO_ID"
+    printf '{"success":true,"id":"%s"}\n' "$SCENARIO_ID"
+fi
