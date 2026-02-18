@@ -49,6 +49,12 @@ const gradientOptions = [
   { id: "blue", value: "from-blue-500 via-indigo-500 to-purple-600" },
   { id: "amber", value: "from-amber-500 via-orange-500 to-red-500" },
   { id: "slate", value: "from-slate-600 via-gray-700 to-zinc-800" },
+  { id: "sky", value: "from-sky-400 via-blue-500 to-indigo-500" },
+  { id: "lime", value: "from-lime-400 via-green-500 to-emerald-600" },
+  { id: "fuchsia", value: "from-fuchsia-500 via-pink-600 to-rose-600" },
+  { id: "gold", value: "from-yellow-400 via-amber-500 to-orange-600" },
+  { id: "ocean", value: "from-cyan-500 via-blue-600 to-indigo-800" },
+  { id: "sunset", value: "from-orange-400 via-red-500 to-pink-600" },
 ];
 
 // Default (built-in) scenarios — icons are UI-only, not stored in backend

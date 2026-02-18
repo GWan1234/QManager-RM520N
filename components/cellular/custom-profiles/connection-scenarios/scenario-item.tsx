@@ -41,6 +41,12 @@ const getRingColor = (gradient: string) => {
   if (gradient.includes("blue")) return "ring-blue-500";
   if (gradient.includes("amber")) return "ring-amber-500";
   if (gradient.includes("slate")) return "ring-slate-500";
+  if (gradient.includes("sky")) return "ring-sky-500";
+  if (gradient.includes("lime")) return "ring-lime-500";
+  if (gradient.includes("fuchsia")) return "ring-fuchsia-500";
+  if (gradient.includes("yellow")) return "ring-yellow-500";
+  if (gradient.includes("cyan")) return "ring-cyan-500";
+  if (gradient.includes("orange")) return "ring-orange-500";
   return "ring-primary";
 };
 
