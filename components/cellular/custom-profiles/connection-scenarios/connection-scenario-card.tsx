@@ -22,6 +22,9 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { AbstractPattern } from "./abstract-pattern";
 import { AddScenarioItem } from "./add-scenario-item";
 import { ActiveConfigCard } from "./active-config-card";
@@ -149,7 +152,7 @@ function saveCustomScenarios(scenarios: Scenario[]) {
 // =============================================================================
 
 const ConnectionScenariosCard = () => {
-  const { activeScenarioId, isActivating, activateScenario } =
+  const { activeScenarioId, isLoading, isActivating, activateScenario } =
     useConnectionScenarios();
 
   // --- Selection state (view config without activating) ----------------------
@@ -339,28 +342,65 @@ const ConnectionScenariosCard = () => {
     <div className="grid gap-y-6">
       {/* Row 1: Scenario Profile Cards */}
       <div className="col-span-full grid grid-cols-2 @xl/main:grid-cols-4 gap-4">
-        {scenarios.map((scenario) => (
-          <ScenarioItem
-            key={scenario.id}
-            scenario={scenario}
-            isActive={activeScenarioId === scenario.id}
-            isSelected={selectedId === scenario.id}
-            onSelect={handleSelect}
-            onDelete={handleDeleteScenario}
-          />
-        ))}
-        <AddScenarioItem onClick={() => setShowAddDialog(true)} />
+        {isLoading ? (
+          <>
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="rounded-xl h-36" />
+            ))}
+            <Skeleton className="rounded-xl h-36 opacity-50" />
+          </>
+        ) : (
+          <>
+            {scenarios.map((scenario) => (
+              <ScenarioItem
+                key={scenario.id}
+                scenario={scenario}
+                isActive={activeScenarioId === scenario.id}
+                isSelected={selectedId === scenario.id}
+                onSelect={handleSelect}
+                onDelete={handleDeleteScenario}
+              />
+            ))}
+            <AddScenarioItem onClick={() => setShowAddDialog(true)} />
+          </>
+        )}
       </div>
 
       {/* Row 2: Selected Scenario Configuration */}
       <div className="grid grid-cols-1 @xl/main:grid-cols-2 @5xl/main:grid-cols-2 grid-flow-row *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card *:data-[slot=card]:bg-linear-to-t *:data-[slot=card]:shadow-xs">
-        <ActiveConfigCard
-          scenario={selectedScenario}
-          isActive={isSelectedActive}
-          isActivating={isActivating}
-          onEdit={handleOpenEditDialog}
-          onActivate={handleActivate}
-        />
+        {isLoading ? (
+          <Card className="@container/card">
+            <CardContent className="px-6">
+              <div className="flex items-center gap-3 mb-5">
+                <Skeleton className="h-11 w-11 rounded-xl" />
+                <div className="grid gap-1.5">
+                  <Skeleton className="h-5 w-44" />
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <React.Fragment key={i}>
+                    <Separator />
+                    <div className="flex items-center justify-between">
+                      <Skeleton className="h-4 w-24" />
+                      <Skeleton className="h-4 w-20" />
+                    </div>
+                  </React.Fragment>
+                ))}
+                <Separator />
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <ActiveConfigCard
+            scenario={selectedScenario}
+            isActive={isSelectedActive}
+            isActivating={isActivating}
+            onEdit={handleOpenEditDialog}
+            onActivate={handleActivate}
+          />
+        )}
       </div>
 
       {/* ===== Add Scenario Dialog ===== */}
