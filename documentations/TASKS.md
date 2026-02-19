@@ -1,6 +1,6 @@
 # QManager Task Tracker
 
-**Last Updated:** February 18, 2026
+**Last Updated:** February 19, 2026
 
 This file tracks component wiring progress, active work, and remaining tasks.  
 For architecture, AT command reference, JSON contract, and deployment notes, see `DEVELOPMENT_LOG.md`.
@@ -128,6 +128,41 @@ Radio/RF configuration layer. Controls modem network mode via `AT+QNWPREFCFG="mo
 
 **Architecture note:** Activation is synchronous (single AT command, ~200ms) — no async pipeline or progress dialog needed. Custom scenarios (`custom-*`) are client-side only for now; backend activation returns `not_implemented`.
 
+### Band Locking (`/cellular/settings/band-locking`) — ✅ COMPLETE
+
+Per-category (LTE, NSA NR5G, SA NR5G) band lock management with failover safety mechanism.
+
+| Component | File | Status | Notes |
+|-----------|------|--------|-------|
+| **Band Settings Card** | `band-settings.tsx` | ✅ Done | Failover toggle + status badge (Disabled/Ready/Using Default Bands). Active LTE/NR5G bands + ARFCNs from carrier_components. `isScenarioControlled` disables toggle. |
+| **Band Cards (x3)** | `band-cards.tsx` | ✅ Done | Per-category checkbox grid. Select All/Clear, Lock/Unlock buttons. Lock status badge (All Unlocked / N/M Bands / Scenario Controlled). `disabled` prop for scenario override. |
+| **Page Coordinator** | `band-locking.tsx` | ✅ Done | Owns `useModemStatus`, `useBandLocking`, `useConnectionScenarios` hooks. Distributes data to cards. Scenario override banner via Alert component. |
+
+**Backend:**
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `bands/current.sh` | GET — queries `AT+QNWPREFCFG="ue_capability_band"`, reads failover flags | ✅ Done |
+| `bands/lock.sh` | POST — applies `AT+QNWPREFCFG` for one band type, spawns failover watcher | ✅ Done |
+| `bands/failover_toggle.sh` | POST — writes `/etc/qmanager/band_failover_enabled` (persistent) | ✅ Done |
+| `bands/failover_status.sh` | GET — lightweight flag-only check (zero modem contact), returns enabled/activated/watcher_running | ✅ Done |
+| `qmanager_band_failover` | One-shot watcher: sleeps 15s, checks `AT+QCAINFO` for signal, resets bands to `policy_band` defaults on failure | ✅ Done |
+
+**Types & Hooks:**
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `types/band-locking.ts` | `BandCategory`, `CurrentBands`, `FailoverState`, `FailoverStatusResponse`, parse/format utilities | ✅ Done |
+| `hooks/use-band-locking.ts` | CRUD + failover lifecycle. Polls `failover_status.sh` after lock until watcher completes. Re-fetches `current.sh` on failover activation. | ✅ Done |
+
+**Architecture notes:**
+- Each band category (LTE, NSA, SA) locks independently via separate `lock.sh` POST calls.
+- Failover watcher uses `AT+QCAINFO` (lightweight, ~200ms) for real-time signal check instead of reading stale `status.json`.
+- Supported bands from `policy_band` cached in `status.json` at boot — watcher reads from cache to avoid modem lock contention during failover.
+- Process detachment uses POSIX subshell `( cmd ) >/dev/null 2>&1 &` instead of `setsid` (not available on this BusyBox build).
+- Init script auto-fixes permissions: `chmod +x` on all `qmanager_*` binaries and CGI scripts at startup.
+- Connection Scenarios override: when non-Balanced scenario active, all band locking controls disabled (frontend-only gating, no backend cross-dependencies).
+
 ---
 
 ## Remaining Work
@@ -139,7 +174,8 @@ Radio/RF configuration layer. Controls modem network mode via `AT+QNWPREFCFG="mo
 | 1 | **Active Bands card** | ✅ Done | Per-carrier QCAINFO parser rework. JSON array with band/earfcn/bw/pci/rsrp/rsrq/sinr per CC. NR_SNR /100 conversion. `lib/earfcn.ts` for DL/UL freq calc + band name + duplex mode. |
 | 2 | **Terminal Page** | ⬜ TODO | Wire to `send_command.sh` CGI endpoint (POST). Block `QSCAN` with user-facing message. |
 | 3 | **Cell Scanner Page** | ⬜ TODO | Dedicated endpoint for `AT+QSCAN` with progress indicator and long-command flag coordination. |
-| 4 | **Band Locking / APN Management** | ⬜ TODO | Write-path CGI endpoints (currently only read-path exists). |
+| 4 | **Band Locking** | ✅ Done | Full 3-phase backend (lock, failover, CGI) + 2-phase frontend (types/hook, UI wiring). See below. |
+| 5 | **APN Management** | ⬜ TODO | Write-path CGI endpoints for APN CRUD. |
 
 ### Watchcat & Recovery
 
@@ -153,7 +189,7 @@ Radio/RF configuration layer. Controls modem network mode via `AT+QNWPREFCFG="mo
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 10 | **Band Locking page interaction** | ⬜ DEFERRED | When a non-Balanced scenario is active (Gaming, Streaming, custom), the Band Locking page (`/cellular/settings/band-locking`) and Network Mode component should disable their input fields and show a banner: "Network mode is managed by the active Connection Scenario (Gaming). Switch to Balanced to regain manual control." Balanced scenario = manual mode (user's Band Locking settings apply). Non-Balanced = override mode (scenario controls network mode, inputs disabled). |
+| 10 | **Band Locking page interaction** | ✅ Done | When a non-Balanced scenario is active, Band Locking page disables all controls (checkboxes, lock/unlock buttons, failover toggle) with `opacity-60` dimming and info banner. Per-card "Scenario Controlled" badge. Active bands/ARFCNs remain visible (read-only). Frontend-only gating — no backend cross-dependencies. |
 | 11 | **Custom scenario backend persistence** | ⬜ DEFERRED | Currently custom scenarios are client-side only (lost on refresh). Future: `/etc/qmanager/scenarios/<id>.json` storage, CRUD CGI endpoints (`save.sh`, `delete.sh`, `list.sh`), `scenario_mgr.sh` library mirroring `profile_mgr.sh` pattern. |
 | 12 | **Custom scenario band locking** | ⬜ DEFERRED | Custom scenarios could configure both network mode AND band locks. Apply script would need multi-step async pipeline (like SIM Profile apply) with `AT+QNWPREFCFG="lte_band"`, `"nsa_nr5g_band"`, `"nr5g_band"` commands. |
 
@@ -186,6 +222,9 @@ Radio/RF configuration layer. Controls modem network mode via `AT+QNWPREFCFG="mo
 - ~~Custom SIM Profiles~~ ✅ — Full CRUD + async 3-step apply (APN→TTL/HL→IMEI). Backend: `profile_mgr.sh` library, `qmanager_profile_apply` detached script, 9 CGI endpoints. Frontend: form with MNO presets, table with actions, apply progress dialog, 3 hooks. Band locking removed — identity-only profiles.
 - ~~Connection Scenarios~~ ✅ — 3 default scenarios (Balanced/Gaming/Streaming) mapped to `AT+QNWPREFCFG="mode_pref"`. Synchronous activation (single AT command). Backend: `activate.sh` + `active.sh` CGI endpoints. Frontend: `useConnectionScenarios` hook wired to existing gradient card UI. Toast feedback, activation guard.
 - ~~Band removal from SIM Profiles~~ ✅ — Stripped `network_mode`, `lte_bands`, `nsa_nr_bands`, `sa_nr_bands`, `band_lock_enabled` from all layers (types, hooks, form, backend scripts, CGI endpoints). Cleaned dead validators and stale step labels.
+- ~~Band Locking~~ ✅ — 3-phase backend: `lock.sh` (per-category AT+QNWPREFCFG), `qmanager_band_failover` (one-shot watcher, AT+QCAINFO signal check, policy_band reset), `failover_status.sh` (lightweight flag polling). 2-phase frontend: `types/band-locking.ts` + `use-band-locking.ts` hook (with failover status polling), `band-locking.tsx` coordinator + `band-cards.tsx` (checkbox grid) + `band-settings.tsx` (failover toggle, active bands/ARFCNs). Connection Scenarios integration: non-Balanced disables all controls with info banner.
+- ~~Connection Scenarios → Band Locking integration~~ ✅ — Frontend-only gating. `useConnectionScenarios()` imported in band-locking coordinator. `isScenarioControlled` derived from `activeScenarioId !== "balanced"`. Alert banner, per-card "Scenario Controlled" badge, `opacity-60` dimming, disabled controls. No backend changes.
+- ~~setsid removal~~ ✅ — Replaced `setsid` (not available on BusyBox) with POSIX subshell `( cmd ) >/dev/null 2>&1 &` across all 3 scripts: `lock.sh`, `speedtest_start.sh`, `profiles/apply.sh`. Init script now auto-`chmod +x` all qmanager binaries and CGI scripts at startup.
 
 </details>
 

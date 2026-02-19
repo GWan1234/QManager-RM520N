@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 17, 2026 (Cellular & Radio Information Page Complete — EARFCN Utility Added)
+**Last Updated:** February 19, 2026 (Band Locking Complete — Failover Safety, Scenario Integration, setsid Removal)
 
 ---
 
@@ -17,6 +17,7 @@
 7. [Resolved Debugging Notes](#7-resolved-debugging-notes)
 8. [Connectivity Architecture Reference](#8-connectivity-architecture-reference)
 9. [Speedtest Architecture Reference](#9-speedtest-architecture-reference)
+10. [Band Locking Architecture Reference](#10-band-locking-architecture-reference)
 
 **See also:** `TASKS.md` — Component wiring progress, remaining work, and active task tracker.
 
@@ -88,6 +89,11 @@
 | `scripts/cgi/quecmanager/at_cmd/speedtest_check.sh` | `/www/cgi-bin/quecmanager/at_cmd/speedtest_check.sh` | **Speedtest Check CGI** — GET endpoint, returns `{"available": true/false}` based on `command -v speedtest` |
 | `scripts/cgi/quecmanager/at_cmd/speedtest_start.sh` | `/www/cgi-bin/quecmanager/at_cmd/speedtest_start.sh` | **Speedtest Start CGI** — POST endpoint, spawns Ookla speedtest-cli in detached session via setsid + wrapper script. Singleton enforcement via PID file. |
 | `scripts/cgi/quecmanager/at_cmd/speedtest_status.sh` | `/www/cgi-bin/quecmanager/at_cmd/speedtest_status.sh` | **Speedtest Status CGI** — GET endpoint, returns idle/running/complete/error with progress data. Filters for JSON-only lines (grep `^{`) to skip ASCII art. |
+| `scripts/cgi/quecmanager/bands/current.sh` | `/www/cgi-bin/quecmanager/bands/current.sh` | **Band Current CGI** — GET endpoint, queries `AT+QNWPREFCFG="ue_capability_band"` for locked bands + reads failover flags |
+| `scripts/cgi/quecmanager/bands/lock.sh` | `/www/cgi-bin/quecmanager/bands/lock.sh` | **Band Lock CGI** — POST endpoint, applies `AT+QNWPREFCFG` for one band type, spawns failover watcher if enabled |
+| `scripts/cgi/quecmanager/bands/failover_toggle.sh` | `/www/cgi-bin/quecmanager/bands/failover_toggle.sh` | **Failover Toggle CGI** — POST endpoint, writes enabled flag to `/etc/qmanager/band_failover_enabled` |
+| `scripts/cgi/quecmanager/bands/failover_status.sh` | `/www/cgi-bin/quecmanager/bands/failover_status.sh` | **Failover Status CGI** — GET endpoint, lightweight (zero modem contact), reads 2 flag files + checks watcher PID |
+| `scripts/usr/bin/qmanager_band_failover` | `/usr/bin/qmanager_band_failover` | **Band Failover Watcher** — One-shot script: sleeps 15s, checks `AT+QCAINFO` for signal, resets bands to policy_band defaults on failure |
 
 **Note on file extensions:** Directly-executed scripts in `/usr/bin/` have **no** `.sh` extension (`qcmd`, `qmanager_poller`, `qmanager_logread`). The logging library keeps `.sh` because it's sourced (`. /usr/lib/qmanager/qlog.sh`), not executed directly. CGI scripts keep `.sh` because the extension is part of their URL path.
 
@@ -156,6 +162,11 @@ echo "DEBUG" > /etc/qmanager/log_level
 | `lib/earfcn.ts` | **EARFCN/NR-ARFCN Utility** — DL/UL frequency calculation (3GPP TS 36.101 + 38.104 global raster), band name lookup, duplex mode lookup. Handles NR band overlap ambiguity (e.g. ARFCN 528030 → n7 FDD vs n41 TDD) via optional band hint parameter. Used by Active Bands component. |
 | `components/cellular/active-bands.tsx` | **Wired** — Per-carrier accordion with signal bars, technology+duplex badge (e.g. "PCC LTE FDD"), band name, DL/UL frequency, bandwidth, EARFCN, PCI |
 | `components/cellular/cell-data.tsx` | **Wired** — Cellular Information card with ISP, APN, network type, Cell ID, TAC, bandwidth, CA, MIMO, WAN IP, DNS |
+| `types/band-locking.ts` | **Band Locking Types** — `BandCategory`, `CurrentBands`, `FailoverState`, `FailoverStatusResponse`, parse/format utilities |
+| `hooks/use-band-locking.ts` | **Band Locking Hook** — Fetches current bands, locks/unlocks per-category, failover toggle, failover status polling after lock |
+| `components/cellular/band-locking.tsx` | **Wired** — Page coordinator. Owns `useModemStatus`, `useBandLocking`, `useConnectionScenarios`. Scenario override banner. Distributes data to cards. |
+| `components/cellular/band-cards.tsx` | **Wired** — Per-category checkbox grid with Select All/Clear, Lock/Unlock buttons. Lock status badge. Disabled mode for scenario override. |
+| `components/cellular/band-settings.tsx` | **Wired** — Failover toggle + status badge (Disabled/Ready/Using Default Bands). Active LTE/NR5G bands + ARFCNs from carrier_components. |
 
 ---
 
@@ -721,6 +732,48 @@ The `>/dev/null 2>&1` on the `setsid` line is critical — without it, the wrapp
 
 **Solution:** Replace `tail -1` with `grep '^{' output_file | tail -1` everywhere the output file is read. This filters for lines starting with `{` (valid JSON objects) before taking the last one. Applied to both the "running" progress read and the "complete" result harvest.
 
+### BusyBox Lacks `setsid`
+
+**Problem:** The architecture spec and initial implementations used `setsid` to detach background processes (speedtest wrapper, profile apply, band failover watcher) from uhttpd's process group. BusyBox on this OpenWRT build does not include `setsid` — running it produces `-ash: setsid: not found`.
+
+**Impact:** Without proper detachment, uhttpd kills spawned processes when the CGI handler exits (sends SIGTERM to process group). The failover watcher was silently never running because `lock.sh` used `setsid` and the `-x` permission check also failed (see below).
+
+**Solution:** POSIX subshell double-fork pattern, which works on any shell:
+```sh
+( "$SCRIPT" ) >/dev/null 2>&1 &
+```
+The subshell `( )` creates a child process. The `&` backgrounds it. `>/dev/null 2>&1` prevents stdout/stderr from leaking into the CGI HTTP response. The parentheses are sufficient to detach from uhttpd's process group on this platform.
+
+Applied consistently to all three CGI scripts that spawn background processes:
+- `bands/lock.sh` — spawns `qmanager_band_failover`
+- `at_cmd/speedtest_start.sh` — spawns speedtest wrapper
+- `profiles/apply.sh` — spawns `qmanager_profile_apply`
+
+### Missing Execute Permissions After Deploy
+
+**Problem:** Scripts deployed to the modem via `scp` or file copy may lose their execute bit, arriving as `644` instead of `755`. Shell scripts invoked directly (like `qmanager_band_failover`) fail silently when a CGI script checks `[ -x "$SCRIPT" ]` before spawning.
+
+**Detection:** The failover watcher never ran after band locking. Diagnosis:
+```bash
+ls -la /usr/bin/qmanager_band_failover  # → -rw-r--r-- (no +x)
+logread | grep band_failover             # → no output
+cat /tmp/qmanager_band_failover.pid     # → empty/missing
+```
+
+**Solution:** Added permission auto-fix to `/etc/init.d/qmanager` `start_service()`:
+```sh
+# Ensure all /usr/bin scripts are executable
+for f in /usr/bin/qmanager_*; do
+    [ -f "$f" ] && chmod +x "$f"
+done
+
+# Ensure all CGI scripts are executable
+for f in /www/cgi-bin/quecmanager/*.sh /www/cgi-bin/quecmanager/*/*.sh; do
+    [ -f "$f" ] && chmod +x "$f"
+done
+```
+This runs on every service start, ensuring permissions are correct even after a deploy that strips them.
+
 ### Exit Code Convention in qcmd
 
 | Exit Code | Meaning |
@@ -753,7 +806,8 @@ All 10 home page components are wired to live data and functional:
 5. **Terminal Page** — Wire to `send_command.sh` CGI endpoint (POST). Block `QSCAN` commands with user-facing message.
 6. **Cell Scanner Page** — Dedicated endpoint for `AT+QSCAN` with progress indicator and long-command flag coordination.
 7. ~~**Cellular Information Page**~~ ✅ Done — Cellular Information card + Active Bands card. `lib/earfcn.ts` for DL/UL frequency, band name, duplex mode. See `TASKS.md` for full implementation details.
-8. **Band Locking / APN Management** — Write-path CGI endpoints (currently only read-path exists).
+8. ~~**Band Locking**~~ ✅ Done — Full per-category lock/unlock with failover safety, scenario integration. See Section 10.
+8b. **APN Management** — Write-path CGI endpoints (currently only read-path exists).
 
 ### Connectivity & Watchcat (See: `documentations/CONNECTIVITY_ARCHITECTURE.md`)
 
@@ -872,6 +926,8 @@ Key design decisions summarized here for quick reference:
 | `/tmp/qmanager_speedtest_error` | speedtest process | speedtest_start.sh, speedtest_status.sh | stderr capture for diagnostics |
 | `/tmp/qmanager_speedtest_run.sh` | speedtest_start.sh | setsid (executed) | Generated wrapper script (sources /etc/profile, exec speedtest) |
 | `/tmp/qmanager_speedtest_env` | wrapper script | Debug only | Environment dump (remove once stable) |
+| `/tmp/qmanager_band_failover` | `qmanager_band_failover` | `failover_status.sh`, `use-band-locking.ts` | Flag: failover watcher activated (bands were reset to defaults) |
+| `/tmp/qmanager_band_failover.pid` | `qmanager_band_failover` | `failover_status.sh`, `lock.sh` | Watcher PID file (singleton enforcement + running detection) |
 
 ### Flag Files Registry
 
@@ -882,6 +938,7 @@ Key design decisions summarized here for quick reference:
 | `/tmp/qmanager_long_running` | `qcmd` | Poller, Watchcat | Long AT command active (QSCAN) |
 | `/tmp/qmanager_watchcat.lock` | NetModing scripts | Watchcat | Maintenance mode (band switching) |
 | `/tmp/qmanager_recovery_active` | Watchcat | Ping daemon, Poller | Recovery action in progress |
+| `/etc/qmanager/band_failover_enabled` | `failover_toggle.sh` | `lock.sh`, `current.sh`, `failover_status.sh` | Persistent: band failover safety mechanism enabled |
 
 ---
 
@@ -942,6 +999,98 @@ Example from actual hardware: `bandwidth: 60677864` B/s = 485.4 Mbps download.
 - Traffic counters in `/proc/net/dev` show speedtest traffic as real usage
 - CPU usage spikes visible in poller's `/proc/stat` readings
 - No pause/yield for ping daemon during test (maintains continuous connectivity monitoring)
+
+---
+
+## 10. Band Locking Architecture Reference
+
+Per-category band lock management for LTE, NSA NR5G, and SA NR5G with a failover safety mechanism that auto-resets bands if signal is lost after locking.
+
+### Design Decisions
+
+- **Per-category independence:** Each band type (LTE, NSA NR5G, SA NR5G) is locked/unlocked via separate `AT+QNWPREFCFG` calls. No batching — follows "sip, don't gulp" pattern.
+- **Failover safety:** Optional one-shot watcher spawned after each lock. Sleeps 15s, checks `AT+QCAINFO` for signal, resets bands to `policy_band` defaults if no carrier data found.
+- **AT+QCAINFO for signal check:** Lightweight (~200ms), real-time. If response contains no `+QCAINFO:` lines, modem has no signal. Preferred over reading `status.json` which may be stale by up to 10s.
+- **Supported bands from cache:** Failover watcher reads `policy_band` values from `status.json` (collected at boot) to avoid modem lock contention during failover reset.
+- **Connection Scenarios override:** Frontend-only gating. When non-Balanced scenario active, all band locking controls disabled. No backend cross-dependencies.
+
+### AT Commands Used
+
+| Command | Purpose | Response Format |
+|---------|---------|----------------|
+| `AT+QNWPREFCFG="ue_capability_band"` | Read currently configured bands | `+QNWPREFCFG: "lte_band",1:3:7:28\n+QNWPREFCFG: "nsa_nr5g_band",41:78\n...` |
+| `AT+QNWPREFCFG="lte_band",1:3:7` | Lock LTE to specific bands | `OK` |
+| `AT+QNWPREFCFG="nsa_nr5g_band",41:78` | Lock NSA NR to specific bands | `OK` |
+| `AT+QNWPREFCFG="nr5g_band",41:78` | Lock SA NR to specific bands | `OK` |
+| `AT+QNWPREFCFG="policy_band"` | Read all hardware-supported bands (ceiling) | Same format as `ue_capability_band` |
+| `AT+QCAINFO` | Check active carriers (failover signal check) | `+QCAINFO: "PCC",...` lines if signal, empty if no signal |
+
+**Band format:** Colon-delimited band numbers. Same format stored in JSON, sent to modem — zero conversion. "Unlock all" = set to full `policy_band` list.
+
+### Failover Watcher Lifecycle
+
+```
+User locks bands → lock.sh checks failover enabled
+  │
+  ├─ Failover disabled → return success, no watcher
+  │
+  └─ Failover enabled → spawn ( qmanager_band_failover ) &
+       │
+       ├─ Write PID to /tmp/qmanager_band_failover.pid
+       ├─ Sleep 15 seconds (let modem settle on new bands)
+       ├─ qcmd 'AT+QCAINFO' → check for +QCAINFO: lines
+       │
+       ├─ Has +QCAINFO: → signal OK → clean exit (remove PID file)
+       │
+       └─ No +QCAINFO: → no signal → failover!
+            ├─ Read supported bands from status.json cache
+            ├─ Reset each band type to full policy_band list via qcmd
+            ├─ Write /tmp/qmanager_band_failover flag (activated)
+            └─ Clean exit (remove PID file)
+```
+
+### Frontend Failover Polling
+
+```
+Lock success (failover_armed: true) → clear activated flag → start polling
+  │
+  ├─ Poll failover_status.sh every 3s
+  │   Returns: { enabled: bool, activated: bool, watcher_running: bool }
+  │
+  ├─ While watcher_running: true → keep polling
+  │
+  └─ watcher_running: false → stop polling
+       ├─ activated: true → UI shows "Using Default Bands" badge
+       │   → re-fetch current.sh to get reset band values
+       └─ activated: false → signal was fine, no UI change
+```
+
+### CGI Endpoints
+
+| Endpoint | Method | Purpose | Modem? |
+|----------|--------|---------|--------|
+| `bands/current.sh` | GET | Current locked bands + supported bands + failover state | Yes (1 AT call) |
+| `bands/lock.sh` | POST | Lock one band category, spawn failover watcher | Yes (1 AT call) |
+| `bands/failover_toggle.sh` | POST | Enable/disable failover (persistent to flash) | No |
+| `bands/failover_status.sh` | GET | Failover flags + watcher PID check | No (3 file reads) |
+
+### Files Modified/Created
+
+| File | Action | Purpose |
+|------|--------|--------|
+| `scripts/cgi/quecmanager/bands/current.sh` | Created | Read locked bands + failover state |
+| `scripts/cgi/quecmanager/bands/lock.sh` | Created | Lock bands + spawn watcher |
+| `scripts/cgi/quecmanager/bands/failover_toggle.sh` | Created | Persistent failover enable/disable |
+| `scripts/cgi/quecmanager/bands/failover_status.sh` | Created | Lightweight flag polling endpoint |
+| `scripts/usr/bin/qmanager_band_failover` | Created | One-shot failover watcher |
+| `scripts/etc/init.d/qmanager` | Modified | Added `chmod +x` auto-fix for all scripts at startup |
+| `scripts/cgi/quecmanager/at_cmd/speedtest_start.sh` | Modified | Replaced `setsid` with `( cmd ) &` |
+| `scripts/cgi/quecmanager/profiles/apply.sh` | Modified | Replaced `setsid` with `( cmd ) &` |
+| `types/band-locking.ts` | Created | TypeScript interfaces + parse/format utilities |
+| `hooks/use-band-locking.ts` | Created | CRUD + failover lifecycle hook |
+| `components/cellular/band-locking.tsx` | Modified | Added scenario override (useConnectionScenarios, Alert banner, disabled prop) |
+| `components/cellular/band-cards.tsx` | Modified | Added disabled prop, "Scenario Controlled" badge, opacity dimming |
+| `components/cellular/band-settings.tsx` | Modified | Added isScenarioControlled prop, disabled failover toggle |
 
 ---
 
