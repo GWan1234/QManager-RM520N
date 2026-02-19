@@ -53,21 +53,16 @@ else
     exit 0
 fi
 
-# --- Parse fields ------------------------------------------------------------
-# Handle both quoted and unquoted booleans
-parse_bool() {
-    printf '%s' "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\(true\|false\|\"true\"\|\"false\"\).*/\1/p" | tr -d '"' | head -1
-}
-parse_num() {
-    printf '%s' "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p" | head -1
-}
-
-PERSIST=$(parse_bool "persist")
-FO_ENABLED=$(parse_bool "failover_enabled")
-FO_THRESHOLD=$(parse_num "failover_threshold")
+# --- Parse fields using jq ---------------------------------------------------
+# IMPORTANT: Cannot use `// empty` for booleans — jq treats `false` as falsy,
+# so `false // empty` produces nothing. Use `has()` + `tostring` instead.
+# "unset" = field not present in POST body (keep current value).
+PERSIST=$(printf '%s' "$POST_DATA" | jq -r 'if has("persist") then (.persist | tostring) else "unset" end' 2>/dev/null)
+FO_ENABLED=$(printf '%s' "$POST_DATA" | jq -r 'if has("failover_enabled") then (.failover_enabled | tostring) else "unset" end' 2>/dev/null)
+FO_THRESHOLD=$(printf '%s' "$POST_DATA" | jq -r 'if has("failover_threshold") then (.failover_threshold | tostring) else "unset" end' 2>/dev/null)
 
 # --- Validate ----------------------------------------------------------------
-if [ -z "$PERSIST" ] && [ -z "$FO_ENABLED" ] && [ -z "$FO_THRESHOLD" ]; then
+if [ "$PERSIST" = "unset" ] && [ "$FO_ENABLED" = "unset" ] && [ "$FO_THRESHOLD" = "unset" ]; then
     echo '{"success":false,"error":"no_fields","detail":"No settings fields provided"}'
     exit 0
 fi
@@ -75,21 +70,20 @@ fi
 # Ensure config exists
 tower_config_init
 
-# Read current values as defaults
-config=$(cat "$TOWER_CONFIG_FILE" 2>/dev/null)
-current_persist=$(tower_config_get "persist")
+# Read current values as defaults (using jq — safe)
+current_persist=$(tower_config_get ".persist")
 [ "$current_persist" != "true" ] && current_persist="false"
 
-current_fo_enabled=$(printf '%s' "$config" | sed -n '/"failover"/,/}/p' | grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-[ -z "$current_fo_enabled" ] && current_fo_enabled="true"
+current_fo_enabled=$(tower_config_get ".failover.enabled")
+[ "$current_fo_enabled" != "true" ] && [ "$current_fo_enabled" != "false" ] && current_fo_enabled="true"
 
-current_fo_threshold=$(tower_config_get "threshold")
+current_fo_threshold=$(tower_config_get ".failover.threshold")
 [ -z "$current_fo_threshold" ] && current_fo_threshold="20"
 
-# Apply provided values (or keep current)
-[ -z "$PERSIST" ] && PERSIST="$current_persist"
-[ -z "$FO_ENABLED" ] && FO_ENABLED="$current_fo_enabled"
-[ -z "$FO_THRESHOLD" ] && FO_THRESHOLD="$current_fo_threshold"
+# Apply provided values (or keep current if "unset")
+[ "$PERSIST" = "unset" ] && PERSIST="$current_persist"
+[ "$FO_ENABLED" = "unset" ] && FO_ENABLED="$current_fo_enabled"
+[ "$FO_THRESHOLD" = "unset" ] && FO_THRESHOLD="$current_fo_threshold"
 
 # Validate threshold range
 if [ -n "$FO_THRESHOLD" ]; then
@@ -132,14 +126,20 @@ if [ "$PERSIST" != "$current_persist" ]; then
     fi
 fi
 
-# --- Update config file ------------------------------------------------------
+# --- Update config file using jq (atomic, safe) -----------------------------
 tower_config_update_settings "$PERSIST" "$FO_ENABLED" "$FO_THRESHOLD"
 
 # --- Response ----------------------------------------------------------------
 if [ "$persist_ok" = "true" ]; then
-    printf '{"success":true,"persist":%s,"failover_enabled":%s,"failover_threshold":%s}\n' \
-        "$PERSIST" "$FO_ENABLED" "$FO_THRESHOLD"
+    jq -n \
+        --argjson persist "$PERSIST" \
+        --argjson fo_enabled "$FO_ENABLED" \
+        --argjson fo_threshold "$FO_THRESHOLD" \
+        '{success: true, persist: $persist, failover_enabled: $fo_enabled, failover_threshold: $fo_threshold}'
 else
-    printf '{"success":true,"persist_command_failed":true,"persist":%s,"failover_enabled":%s,"failover_threshold":%s}\n' \
-        "$PERSIST" "$FO_ENABLED" "$FO_THRESHOLD"
+    jq -n \
+        --argjson persist "$PERSIST" \
+        --argjson fo_enabled "$FO_ENABLED" \
+        --argjson fo_threshold "$FO_THRESHOLD" \
+        '{success: true, persist_command_failed: true, persist: $persist, failover_enabled: $fo_enabled, failover_threshold: $fo_threshold}'
 fi

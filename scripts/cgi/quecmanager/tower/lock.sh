@@ -60,17 +60,9 @@ else
     exit 0
 fi
 
-# --- JSON field extraction helpers -------------------------------------------
-json_str() {
-    printf '%s' "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
-}
-json_num() {
-    printf '%s' "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([0-9-]*\).*/\1/p" | head -1
-}
-
-# --- Parse common fields -----------------------------------------------------
-LOCK_TYPE=$(json_str "type")
-ACTION=$(json_str "action")
+# --- Parse common fields using jq --------------------------------------------
+LOCK_TYPE=$(printf '%s' "$POST_DATA" | jq -r '.type // empty' 2>/dev/null)
+ACTION=$(printf '%s' "$POST_DATA" | jq -r '.action // empty' 2>/dev/null)
 
 if [ -z "$LOCK_TYPE" ]; then
     echo '{"success":false,"error":"no_type","detail":"Missing type field (lte or nr_sa)"}'
@@ -91,29 +83,13 @@ tower_config_init
 if [ "$LOCK_TYPE" = "lte" ]; then
 
     if [ "$ACTION" = "lock" ]; then
-        # --- Parse cells array from POST data ---
-        # Extract EARFCN/PCI pairs from the cells array
-        # We expect up to 3 cells. Parse using sed/awk.
-        c1_earfcn=$(printf '%s' "$POST_DATA" | sed 's/.*"cells"[[:space:]]*:[[:space:]]*\[//' | \
-            sed 's/\].*//' | awk -F'}' '{print $1}' | \
-            sed -n 's/.*"earfcn"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
-        c1_pci=$(printf '%s' "$POST_DATA" | sed 's/.*"cells"[[:space:]]*:[[:space:]]*\[//' | \
-            sed 's/\].*//' | awk -F'}' '{print $1}' | \
-            sed -n 's/.*"pci"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
-
-        c2_earfcn=$(printf '%s' "$POST_DATA" | sed 's/.*"cells"[[:space:]]*:[[:space:]]*\[//' | \
-            sed 's/\].*//' | awk -F'}' '{print $2}' | \
-            sed -n 's/.*"earfcn"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
-        c2_pci=$(printf '%s' "$POST_DATA" | sed 's/.*"cells"[[:space:]]*:[[:space:]]*\[//' | \
-            sed 's/\].*//' | awk -F'}' '{print $2}' | \
-            sed -n 's/.*"pci"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
-
-        c3_earfcn=$(printf '%s' "$POST_DATA" | sed 's/.*"cells"[[:space:]]*:[[:space:]]*\[//' | \
-            sed 's/\].*//' | awk -F'}' '{print $3}' | \
-            sed -n 's/.*"earfcn"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
-        c3_pci=$(printf '%s' "$POST_DATA" | sed 's/.*"cells"[[:space:]]*:[[:space:]]*\[//' | \
-            sed 's/\].*//' | awk -F'}' '{print $3}' | \
-            sed -n 's/.*"pci"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
+        # --- Parse cells array from POST data using jq ---
+        c1_earfcn=$(printf '%s' "$POST_DATA" | jq -r '.cells[0].earfcn // empty' 2>/dev/null)
+        c1_pci=$(printf '%s' "$POST_DATA" | jq -r '.cells[0].pci // empty' 2>/dev/null)
+        c2_earfcn=$(printf '%s' "$POST_DATA" | jq -r '.cells[1].earfcn // empty' 2>/dev/null)
+        c2_pci=$(printf '%s' "$POST_DATA" | jq -r '.cells[1].pci // empty' 2>/dev/null)
+        c3_earfcn=$(printf '%s' "$POST_DATA" | jq -r '.cells[2].earfcn // empty' 2>/dev/null)
+        c3_pci=$(printf '%s' "$POST_DATA" | jq -r '.cells[2].pci // empty' 2>/dev/null)
 
         # Count valid cells
         num_cells=0
@@ -205,13 +181,8 @@ if [ "$LOCK_TYPE" = "lte" ]; then
 
         qlog_info "LTE tower lock cleared"
 
-        # Update config — preserve cell data but set enabled=false
-        # Read existing cells from config to preserve them
-        config=$(cat "$TOWER_CONFIG_FILE" 2>/dev/null)
-        e1=$(printf '%s' "$config" | sed -n '/"cells"/,/\]/p' | grep '"earfcn"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-        p1=$(printf '%s' "$config" | sed -n '/"cells"/,/\]/p' | grep '"pci"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-        # For simplicity, re-read the full cells and just flip enabled
-        tower_config_update_lte "false" "$e1" "$p1" "" "" "" ""
+        # Update config — preserve ALL cell data, just set enabled=false
+        tower_config_update '.lte.enabled = false'
 
         # Kill failover watcher
         tower_kill_failover_watcher
@@ -228,10 +199,10 @@ if [ "$LOCK_TYPE" = "lte" ]; then
 elif [ "$LOCK_TYPE" = "nr_sa" ]; then
 
     if [ "$ACTION" = "lock" ]; then
-        nr_pci=$(json_num "pci")
-        nr_arfcn=$(json_num "arfcn")
-        nr_scs=$(json_num "scs")
-        nr_band=$(json_num "band")
+        nr_pci=$(printf '%s' "$POST_DATA" | jq -r '.pci // empty' 2>/dev/null)
+        nr_arfcn=$(printf '%s' "$POST_DATA" | jq -r '.arfcn // empty' 2>/dev/null)
+        nr_scs=$(printf '%s' "$POST_DATA" | jq -r '.scs // empty' 2>/dev/null)
+        nr_band=$(printf '%s' "$POST_DATA" | jq -r '.band // empty' 2>/dev/null)
 
         # Validate all fields present
         if [ -z "$nr_pci" ] || [ -z "$nr_arfcn" ] || [ -z "$nr_scs" ] || [ -z "$nr_band" ]; then
@@ -297,8 +268,8 @@ elif [ "$LOCK_TYPE" = "nr_sa" ]; then
 
         qlog_info "NR-SA tower lock cleared"
 
-        # Update config — preserve params but set enabled=false
-        tower_config_update_nr "false"
+        # Update config — preserve ALL NR params, just set enabled=false
+        tower_config_update '.nr_sa.enabled = false'
 
         # Kill failover watcher
         tower_kill_failover_watcher

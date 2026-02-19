@@ -29,11 +29,11 @@ if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
 fi
 
 # --- Read failover enabled from config (flash) ------------------------------
+# NOTE: Do not use `// false` — jq's alternative operator treats `false` as
+# falsy, so `false // false` always returns the alternative. Use direct access.
 enabled="false"
 if [ -f "$TOWER_CONFIG_FILE" ]; then
-    # Extract failover.enabled from the failover section
-    val=$(sed -n '/"failover"/,/}/p' "$TOWER_CONFIG_FILE" 2>/dev/null | \
-        grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
+    val=$(jq -r '.failover.enabled' "$TOWER_CONFIG_FILE" 2>/dev/null)
     [ "$val" = "true" ] && enabled="true"
 fi
 

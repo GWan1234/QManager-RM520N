@@ -47,8 +47,10 @@ export interface UseTowerLockingReturn {
   failoverState: TowerFailoverState | null;
   /** True during initial data fetch */
   isLoading: boolean;
-  /** True while a lock/unlock operation is in progress */
-  isLocking: boolean;
+  /** True while an LTE lock/unlock operation is in progress */
+  isLteLocking: boolean;
+  /** True while an NR-SA lock/unlock operation is in progress */
+  isNrLocking: boolean;
   /** Error message from the last operation */
   error: string | null;
 
@@ -89,11 +91,14 @@ export function useTowerLocking(): UseTowerLockingReturn {
   const [failoverState, setFailoverState] =
     useState<TowerFailoverState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLocking, setIsLocking] = useState(false);
+  const [isLteLocking, setIsLteLocking] = useState(false);
+  const [isNrLocking, setIsNrLocking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   const failoverPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -103,13 +108,19 @@ export function useTowerLocking(): UseTowerLockingReturn {
         clearInterval(failoverPollRef.current);
         failoverPollRef.current = null;
       }
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
     };
   }, []);
 
   // ---------------------------------------------------------------------------
   // Fetch full tower lock status (modem queries + config + failover flags)
   // ---------------------------------------------------------------------------
-  const fetchStatus = useCallback(async () => {
+  const MAX_RETRIES = 3;
+
+  const fetchStatus = useCallback(async (isRetry = false) => {
     try {
       const resp = await fetch(`${CGI_BASE}/status.sh`);
       if (!resp.ok) {
@@ -124,15 +135,36 @@ export function useTowerLocking(): UseTowerLockingReturn {
         return;
       }
 
-      setModemState(data.modem_state);
-      setConfig(data.config);
-      setFailoverState(data.failover_state);
+      // Fix: use explicit null/undefined checks instead of truthy checks.
+      // Objects like {enabled: false} are truthy but would pass, while
+      // the truthy check is really guarding against null/undefined.
+      if (data.modem_state !== null && data.modem_state !== undefined) {
+        setModemState(data.modem_state);
+      }
+      if (data.config !== null && data.config !== undefined) {
+        setConfig(data.config);
+      }
+      if (data.failover_state !== null && data.failover_state !== undefined) {
+        setFailoverState(data.failover_state);
+      }
       setError(null);
+      retryCountRef.current = 0; // Reset retry counter on success
     } catch (err) {
       if (!mountedRef.current) return;
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch tower lock status"
-      );
+      const msg =
+        err instanceof Error ? err.message : "Failed to fetch tower lock status";
+      setError(msg);
+
+      // Auto-retry with exponential backoff (2s, 4s, 8s)
+      if (retryCountRef.current < MAX_RETRIES) {
+        const delay = Math.pow(2, retryCountRef.current + 1) * 1000;
+        retryCountRef.current += 1;
+        retryTimerRef.current = setTimeout(() => {
+          if (mountedRef.current) {
+            fetchStatus(true);
+          }
+        }, delay);
+      }
     } finally {
       if (mountedRef.current) {
         setIsLoading(false);
@@ -199,9 +231,12 @@ export function useTowerLocking(): UseTowerLockingReturn {
   // Generic lock/unlock helper
   // ---------------------------------------------------------------------------
   const sendLockRequest = useCallback(
-    async (body: Record<string, unknown>): Promise<boolean> => {
+    async (
+      body: Record<string, unknown>,
+      setLocking: (v: boolean) => void
+    ): Promise<boolean> => {
       setError(null);
-      setIsLocking(true);
+      setLocking(true);
 
       try {
         const resp = await fetch(`${CGI_BASE}/lock.sh`, {
@@ -246,7 +281,7 @@ export function useTowerLocking(): UseTowerLockingReturn {
         return false;
       } finally {
         if (mountedRef.current) {
-          setIsLocking(false);
+          setLocking(false);
         }
       }
     },
@@ -262,17 +297,19 @@ export function useTowerLocking(): UseTowerLockingReturn {
         setError("At least one EARFCN + PCI pair is required");
         return false;
       }
-      return sendLockRequest({
-        type: "lte",
-        action: "lock",
-        cells,
-      });
+      return sendLockRequest(
+        { type: "lte", action: "lock", cells },
+        setIsLteLocking
+      );
     },
     [sendLockRequest]
   );
 
   const unlockLte = useCallback(async (): Promise<boolean> => {
-    return sendLockRequest({ type: "lte", action: "unlock" });
+    return sendLockRequest(
+      { type: "lte", action: "unlock" },
+      setIsLteLocking
+    );
   }, [sendLockRequest]);
 
   // ---------------------------------------------------------------------------
@@ -280,20 +317,26 @@ export function useTowerLocking(): UseTowerLockingReturn {
   // ---------------------------------------------------------------------------
   const lockNrSa = useCallback(
     async (cell: NrSaLockCell): Promise<boolean> => {
-      return sendLockRequest({
-        type: "nr_sa",
-        action: "lock",
-        pci: cell.pci,
-        arfcn: cell.arfcn,
-        scs: cell.scs,
-        band: cell.band,
-      });
+      return sendLockRequest(
+        {
+          type: "nr_sa",
+          action: "lock",
+          pci: cell.pci,
+          arfcn: cell.arfcn,
+          scs: cell.scs,
+          band: cell.band,
+        },
+        setIsNrLocking
+      );
     },
     [sendLockRequest]
   );
 
   const unlockNrSa = useCallback(async (): Promise<boolean> => {
-    return sendLockRequest({ type: "nr_sa", action: "unlock" });
+    return sendLockRequest(
+      { type: "nr_sa", action: "unlock" },
+      setIsNrLocking
+    );
   }, [sendLockRequest]);
 
   // ---------------------------------------------------------------------------
@@ -341,6 +384,13 @@ export function useTowerLocking(): UseTowerLockingReturn {
                 },
               }
             : prev
+        );
+
+        // Also update failoverState.enabled to match (prevents badge desync)
+        setFailoverState((prev) =>
+          prev
+            ? { ...prev, enabled: failover.enabled }
+            : { enabled: failover.enabled, activated: false, watcher_running: false }
         );
 
         return true;
@@ -411,7 +461,8 @@ export function useTowerLocking(): UseTowerLockingReturn {
     modemState,
     failoverState,
     isLoading,
-    isLocking,
+    isLteLocking,
+    isNrLocking,
     error,
     lockLte,
     unlockLte,

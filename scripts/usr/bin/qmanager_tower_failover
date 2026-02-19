@@ -59,7 +59,7 @@ qlog_info "Tower failover watcher started (PID=$$), waiting ${SETTLE_DELAY}s for
 sleep "$SETTLE_DELAY"
 
 # --- Read threshold from config ----------------------------------------------
-threshold=$(tower_config_get "threshold")
+threshold=$(tower_config_get ".failover.threshold")
 [ -z "$threshold" ] && threshold=20
 qlog_debug "Failover threshold: ${threshold}%"
 
@@ -131,9 +131,11 @@ if [ "$quality" -lt "$threshold" ]; then
         *) qlog_info "FAILOVER: NR-SA tower lock cleared" ;;
     esac
 
-    # Update config to reflect disabled state
-    tower_config_update_lte "false" "" "" "" "" "" ""
-    tower_config_update_nr "false"
+    # Update config to reflect disabled state — preserve cell targets!
+    # Only set enabled=false, do NOT clear EARFCN/PCI/ARFCN/Band/SCS.
+    # This matches the manual unlock behavior in lock.sh and lets the user
+    # re-enable the same lock without re-entering all the targets.
+    tower_config_update '.lte.enabled = false | .nr_sa.enabled = false'
 
     # Write activation flag for UI
     echo "activated" > "$ACTIVATED_FLAG"

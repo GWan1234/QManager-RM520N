@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { toast } from "sonner";
 import TowerLockingSettingsComponent from "@/components/cellular/tower-locking/tower-settings";
 import ScheduleTowerLockingComponent from "./schedule-locking";
 import LTELockingComponent from "./lte-locking";
@@ -30,31 +31,39 @@ const TowerLockingComponent = () => {
             modemData={modemData}
             isLoading={tower.isLoading}
             onPersistChange={(persist) => {
-              if (tower.config) {
-                tower.updateSettings(persist, tower.config.failover);
+              if (!tower.config) {
+                toast.error("Settings unavailable — try refreshing the page");
+                return;
               }
+              tower.updateSettings(persist, tower.config.failover);
             }}
             onFailoverChange={(enabled) => {
-              if (tower.config) {
-                tower.updateSettings(tower.config.persist, {
-                  ...tower.config.failover,
-                  enabled,
-                });
+              if (!tower.config) {
+                toast.error("Settings unavailable — try refreshing the page");
+                return;
               }
+              tower.updateSettings(tower.config.persist, {
+                ...tower.config.failover,
+                enabled,
+              });
             }}
             onThresholdChange={(threshold) => {
-              if (tower.config) {
-                tower.updateSettings(tower.config.persist, {
-                  ...tower.config.failover,
-                  threshold,
-                });
+              if (!tower.config) {
+                toast.error("Settings unavailable — try refreshing the page");
+                return;
               }
+              tower.updateSettings(tower.config.persist, {
+                ...tower.config.failover,
+                threshold,
+              });
             }}
           />
           <LTELockingComponent
             config={tower.config}
             modemState={tower.modemState}
-            isLocking={tower.isLocking}
+            modemData={modemData}
+            isLoading={tower.isLoading}
+            isLocking={tower.isLteLocking}
             onLock={(cells) => tower.lockLte(cells)}
             onUnlock={() => tower.unlockLte()}
           />
@@ -68,8 +77,10 @@ const TowerLockingComponent = () => {
           <NRSALockingComponent
             config={tower.config}
             modemState={tower.modemState}
+            modemData={modemData}
             networkType={modemData?.network?.type ?? ""}
-            isLocking={tower.isLocking}
+            isLoading={tower.isLoading}
+            isLocking={tower.isNrLocking}
             onLock={(cell) => tower.lockNrSa(cell)}
             onUnlock={() => tower.unlockNrSa()}
           />

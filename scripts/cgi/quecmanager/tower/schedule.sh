@@ -55,20 +55,16 @@ else
     exit 0
 fi
 
-# --- Parse fields ------------------------------------------------------------
-parse_bool() {
-    printf '%s' "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\(true\|false\|\"true\"\|\"false\"\).*/\1/p" | tr -d '"' | head -1
-}
-parse_str() {
-    printf '%s' "$POST_DATA" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
-}
-
-ENABLED=$(parse_bool "enabled")
-START_TIME=$(parse_str "start_time")
-END_TIME=$(parse_str "end_time")
-
-# Extract days array: [1,2,3,4,5] → "1,2,3,4,5"
-DAYS_RAW=$(printf '%s' "$POST_DATA" | sed -n 's/.*"days"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d ' ')
+# --- Parse fields using jq ---------------------------------------------------
+# IMPORTANT: Cannot use `// empty` for booleans — jq treats `false` as falsy,
+# so `false // empty` produces nothing. Use `has()` + `tostring` instead.
+ENABLED=$(printf '%s' "$POST_DATA" | jq -r 'if has("enabled") then (.enabled | tostring) else "" end' 2>/dev/null)
+START_TIME=$(printf '%s' "$POST_DATA" | jq -r '.start_time // empty' 2>/dev/null)
+END_TIME=$(printf '%s' "$POST_DATA" | jq -r '.end_time // empty' 2>/dev/null)
+# Get days as comma-separated string (e.g., "1,2,3,4,5")
+DAYS_RAW=$(printf '%s' "$POST_DATA" | jq -r '.days // [] | join(",")' 2>/dev/null)
+# Get days as JSON array for config update (e.g., "[1,2,3,4,5]")
+DAYS_JSON=$(printf '%s' "$POST_DATA" | jq -c '.days // [1,2,3,4,5]' 2>/dev/null)
 
 # --- Validate ----------------------------------------------------------------
 if [ -z "$ENABLED" ]; then
@@ -118,23 +114,20 @@ tower_config_init
 
 # --- Scenario 1 guard: Reject enable if no lock targets configured -----------
 if [ "$ENABLED" = "true" ]; then
-    config=$(cat "$TOWER_CONFIG_FILE" 2>/dev/null)
+    # Check LTE: at least one cell with earfcn+pci (using jq)
+    has_lte=$(tower_config_get '.lte.cells | map(select(. != null)) | length')
+    [ -z "$has_lte" ] && has_lte="0"
 
-    # Check LTE: at least one cell with earfcn+pci
-    has_lte="false"
-    lte_check=$(printf '%s' "$config" | sed -n '/"cells"/,/\]/p' | grep '"earfcn"' | head -1)
-    [ -n "$lte_check" ] && has_lte="true"
-
-    # Check NR-SA: all four params non-null
+    # Check NR-SA: pci and arfcn are non-null (using jq)
+    nr_pci=$(tower_config_get '.nr_sa.pci')
+    nr_arfcn=$(tower_config_get '.nr_sa.arfcn')
     has_nr="false"
-    chk_pci=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"pci"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-    chk_arfcn=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"arfcn"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-    if [ -n "$chk_pci" ] && [ "$chk_pci" != "null" ] && \
-       [ -n "$chk_arfcn" ] && [ "$chk_arfcn" != "null" ]; then
+    if [ -n "$nr_pci" ] && [ "$nr_pci" != "null" ] && \
+       [ -n "$nr_arfcn" ] && [ "$nr_arfcn" != "null" ]; then
         has_nr="true"
     fi
 
-    if [ "$has_lte" = "false" ] && [ "$has_nr" = "false" ]; then
+    if [ "$has_lte" = "0" ] && [ "$has_nr" = "false" ]; then
         echo '{"success":false,"error":"no_lock_targets","detail":"Configure LTE or NR-SA lock targets before enabling schedule"}'
         exit 0
     fi
@@ -142,72 +135,13 @@ fi
 
 qlog_info "Schedule update: enabled=$ENABLED start=$START_TIME end=$END_TIME days=$DAYS_RAW"
 
-# --- Update config file schedule section -------------------------------------
-# Read current config to preserve non-schedule fields
-config=$(cat "$TOWER_CONFIG_FILE" 2>/dev/null)
-
-# Read LTE section
-lte_enabled=$(printf '%s' "$config" | sed -n '/"lte"/,/\]/p' | grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-[ -z "$lte_enabled" ] && lte_enabled="false"
-cells_json=$(awk '/"cells"/{found=1} found{print} /\]/{if(found)exit}' "$TOWER_CONFIG_FILE" | \
-    sed '1s/.*\[/[/;' | tr -d '\n' | sed 's/[[:space:]]*//g')
-[ -z "$cells_json" ] && cells_json="[null,null,null]"
-
-# Read NR-SA section
-nr_enabled=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-nr_pci=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"pci"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-nr_arfcn=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"arfcn"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-nr_scs=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"scs"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-nr_band=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"band"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-[ -z "$nr_enabled" ] && nr_enabled="false"
-[ -z "$nr_pci" ] && nr_pci="null"
-[ -z "$nr_arfcn" ] && nr_arfcn="null"
-[ -z "$nr_scs" ] && nr_scs="null"
-[ -z "$nr_band" ] && nr_band="null"
-
-# Read persist + failover
-persist=$(tower_config_get "persist")
-[ "$persist" != "true" ] && persist="false"
-failover_enabled=$(printf '%s' "$config" | sed -n '/"failover"/,/}/p' | grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
-fo_threshold=$(tower_config_get "threshold")
-[ -z "$failover_enabled" ] && failover_enabled="true"
-[ -z "$fo_threshold" ] && fo_threshold="20"
-
-# Use defaults for schedule if not provided (when disabling)
+# --- Update config file schedule section using jq (atomic, safe) -------------
+# Use defaults for schedule params if not provided (when disabling)
 [ -z "$START_TIME" ] && START_TIME="08:00"
 [ -z "$END_TIME" ] && END_TIME="22:00"
-[ -z "$DAYS_RAW" ] && DAYS_RAW="1,2,3,4,5"
+[ -z "$DAYS_JSON" ] || [ "$DAYS_JSON" = "null" ] && DAYS_JSON="[1,2,3,4,5]"
 
-# Build days JSON array
-DAYS_JSON=$(echo "$DAYS_RAW" | sed 's/,/, /g')
-
-cat > "${TOWER_CONFIG_FILE}.tmp" << EOF
-{
-  "lte": {
-    "enabled": $lte_enabled,
-    "cells": $cells_json
-  },
-  "nr_sa": {
-    "enabled": $nr_enabled,
-    "pci": $nr_pci,
-    "arfcn": $nr_arfcn,
-    "scs": $nr_scs,
-    "band": $nr_band
-  },
-  "persist": $persist,
-  "failover": {
-    "enabled": $failover_enabled,
-    "threshold": $fo_threshold
-  },
-  "schedule": {
-    "enabled": $ENABLED,
-    "start_time": "$START_TIME",
-    "end_time": "$END_TIME",
-    "days": [$DAYS_JSON]
-  }
-}
-EOF
-mv "${TOWER_CONFIG_FILE}.tmp" "$TOWER_CONFIG_FILE"
+tower_config_update_schedule "$ENABLED" "$START_TIME" "$END_TIME" "$DAYS_JSON"
 
 # --- Manage crontab entries --------------------------------------------------
 CRON_MARKER="qmanager_tower_schedule"
@@ -253,6 +187,14 @@ else
     qlog_info "Tower schedule cron entries removed"
 fi
 
-# --- Response ----------------------------------------------------------------
-printf '{"success":true,"enabled":%s,"start_time":"%s","end_time":"%s","days":[%s]}\n' \
-    "$ENABLED" "$START_TIME" "$END_TIME" "$DAYS_JSON"
+# --- Response (using jq for guaranteed valid JSON) ---------------------------
+# Reconstruct days as JSON array for response
+DAYS_RESP=$(printf '%s' "$DAYS_RAW" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s%s",$i,(i<NF?",":""); } printf "]"}')
+[ -z "$DAYS_RESP" ] && DAYS_RESP="$DAYS_JSON"
+
+jq -n \
+    --argjson enabled "$ENABLED" \
+    --arg start "$START_TIME" \
+    --arg end "$END_TIME" \
+    --argjson days "$DAYS_RESP" \
+    '{success: true, enabled: $enabled, start_time: $start, end_time: $end, days: $days}'

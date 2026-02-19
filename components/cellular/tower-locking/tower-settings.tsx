@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
+import { toast } from "sonner";
 
 import {
   Card,
@@ -29,7 +30,10 @@ import { Input } from "@/components/ui/input";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import type { TowerLockConfig, TowerFailoverState } from "@/types/tower-locking";
+import type {
+  TowerLockConfig,
+  TowerFailoverState,
+} from "@/types/tower-locking";
 import type { ModemStatus } from "@/types/modem-status";
 import { rsrpToQualityPercent, qualityLevel } from "@/types/tower-locking";
 
@@ -56,8 +60,13 @@ const TowerLockingSettingsComponent = ({
   const [thresholdInput, setThresholdInput] = useState<string>("");
 
   // Sync threshold from config (adjust state during render)
-  const [prevThreshold, setPrevThreshold] = useState<number | undefined>(undefined);
-  if (config?.failover?.threshold !== undefined && config.failover.threshold !== prevThreshold) {
+  const [prevThreshold, setPrevThreshold] = useState<number | undefined>(
+    undefined,
+  );
+  if (
+    config?.failover?.threshold !== undefined &&
+    config.failover.threshold !== prevThreshold
+  ) {
     setPrevThreshold(config.failover.threshold);
     setThresholdInput(String(config.failover.threshold));
   }
@@ -95,7 +104,8 @@ const TowerLockingSettingsComponent = ({
     good: "bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm",
     fair: "bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-300/50 backdrop-blur-sm",
     poor: "bg-orange-500/20 text-orange-500 hover:bg-orange-500/30 border border-orange-300/50 backdrop-blur-sm",
-    critical: "bg-red-500/20 text-red-500 hover:bg-red-500/30 border border-red-300/50 backdrop-blur-sm",
+    critical:
+      "bg-red-500/20 text-red-500 hover:bg-red-500/30 border border-red-300/50 backdrop-blur-sm",
     none: "bg-muted text-muted-foreground border border-border backdrop-blur-sm",
   };
 
@@ -109,18 +119,36 @@ const TowerLockingSettingsComponent = ({
 
   // --- Failover status badge ---
   const renderFailoverBadge = () => {
-    if (!failoverState) {
+    // Show loading only during initial load; after that show a fallback
+    if (!failoverState && isLoading) {
       return (
-        <Badge variant="outline" className="bg-muted text-muted-foreground border border-border backdrop-blur-sm">
+        <Badge
+          variant="outline"
+          className="bg-muted text-muted-foreground border border-border backdrop-blur-sm"
+        >
           <Loader2 className="w-3 h-3 animate-spin" />
           Loading
         </Badge>
       );
     }
 
+    if (!failoverState) {
+      return (
+        <Badge
+          variant="outline"
+          className="bg-muted text-muted-foreground border border-border backdrop-blur-sm"
+        >
+          Unknown
+        </Badge>
+      );
+    }
+
     if (failoverState.watcher_running) {
       return (
-        <Badge variant="outline" className="bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-300/50 backdrop-blur-sm">
+        <Badge
+          variant="outline"
+          className="bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-300/50 backdrop-blur-sm"
+        >
           <TbClockFilled />
           Checking Signal...
         </Badge>
@@ -129,7 +157,10 @@ const TowerLockingSettingsComponent = ({
 
     if (failoverState.activated) {
       return (
-        <Badge variant="outline" className="bg-orange-500/20 text-orange-500 hover:bg-orange-500/30 border border-orange-300/50 backdrop-blur-sm">
+        <Badge
+          variant="outline"
+          className="bg-orange-500/20 text-orange-500 hover:bg-orange-500/30 border border-orange-300/50 backdrop-blur-sm"
+        >
           <TbAlertTriangleFilled />
           Unlocked due to Poor Signal
         </Badge>
@@ -138,14 +169,20 @@ const TowerLockingSettingsComponent = ({
 
     if (!failoverState.enabled) {
       return (
-        <Badge variant="outline" className="bg-muted text-muted-foreground border border-border backdrop-blur-sm">
+        <Badge
+          variant="outline"
+          className="bg-muted text-muted-foreground border border-border backdrop-blur-sm"
+        >
           Disabled
         </Badge>
       );
     }
 
     return (
-      <Badge variant="outline" className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm">
+      <Badge
+        variant="outline"
+        className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm"
+      >
         <TbSquareRoundedCheckFilled />
         Ready
       </Badge>
@@ -154,18 +191,36 @@ const TowerLockingSettingsComponent = ({
 
   // --- Schedule status badge ---
   const renderScheduleBadge = () => {
-    if (!config) {
+    // Show loading only during initial load; after that show a fallback
+    if (!config && isLoading) {
       return (
-        <Badge variant="outline" className="bg-muted text-muted-foreground border border-border backdrop-blur-sm">
+        <Badge
+          variant="outline"
+          className="bg-muted text-muted-foreground border border-border backdrop-blur-sm"
+        >
           <Loader2 className="w-3 h-3 animate-spin" />
           Loading
         </Badge>
       );
     }
 
+    if (!config) {
+      return (
+        <Badge
+          variant="outline"
+          className="bg-muted text-muted-foreground border border-border backdrop-blur-sm"
+        >
+          Unknown
+        </Badge>
+      );
+    }
+
     if (config.schedule.enabled) {
       return (
-        <Badge variant="outline" className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm">
+        <Badge
+          variant="outline"
+          className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm"
+        >
           <TbSquareRoundedCheckFilled />
           Active
         </Badge>
@@ -173,7 +228,10 @@ const TowerLockingSettingsComponent = ({
     }
 
     return (
-      <Badge variant="outline" className="bg-muted text-muted-foreground border border-border backdrop-blur-sm">
+      <Badge
+        variant="outline"
+        className="bg-muted text-muted-foreground border border-border backdrop-blur-sm"
+      >
         Inactive
       </Badge>
     );
@@ -278,6 +336,7 @@ const TowerLockingSettingsComponent = ({
               <Switch
                 id="tower-persist"
                 checked={config?.persist ?? false}
+                disabled={!config}
                 onCheckedChange={onPersistChange}
               />
               <Label htmlFor="tower-persist">
@@ -296,9 +355,8 @@ const TowerLockingSettingsComponent = ({
                   <p>
                     When enabled, the device will unlock from the tower if
                     signal quality
-                    <br/>
-                    degrades below a certain threshold or becomes
-                    unavailable.
+                    <br />
+                    degrades below a certain threshold or becomes unavailable.
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -309,11 +367,17 @@ const TowerLockingSettingsComponent = ({
             <div className="flex items-center space-x-2">
               <Switch
                 id="tower-failover"
-                checked={config?.failover?.enabled ?? true}
-                onCheckedChange={onFailoverChange}
+                checked={config?.failover?.enabled ?? false}
+                disabled={!config}
+                onCheckedChange={(checked) => {
+                  onFailoverChange(checked);
+                  if (!checked) {
+                    toast.warning("Failover disabled");
+                  }
+                }}
               />
               <Label htmlFor="tower-failover">
-                {config?.failover?.enabled ? "Enabled" : "Disabled"}
+                {(config?.failover?.enabled ?? false) ? "Enabled" : "Disabled"}
               </Label>
             </div>
           </div>
@@ -327,10 +391,9 @@ const TowerLockingSettingsComponent = ({
                 <TooltipContent>
                   <p>
                     This will only take effect if Failover is enabled. Set the
-                    signal quality 
-                    <br/>
-                    threshold below which the device will unlock
-                    from the tower.
+                    signal quality
+                    <br />
+                    threshold below which the device will unlock from the tower.
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -375,9 +438,7 @@ const TowerLockingSettingsComponent = ({
               Failover Status
             </p>
             <div className="flex items-center gap-1.5">
-              <p className="text-sm font-semibold ">
-                {renderFailoverBadge()}
-              </p>
+              <p className="text-sm font-semibold ">{renderFailoverBadge()}</p>
             </div>
           </div>
           <Separator />
@@ -386,9 +447,7 @@ const TowerLockingSettingsComponent = ({
               Schedule Locking Status
             </p>
             <div className="flex items-center gap-1.5">
-              <p className="text-sm font-semibold ">
-                {renderScheduleBadge()}
-              </p>
+              <p className="text-sm font-semibold ">{renderScheduleBadge()}</p>
             </div>
           </div>
           <Separator />
