@@ -38,7 +38,13 @@
       "WebSearch",
       "WebFetch(domain:tailscale.com)",
       "WebFetch(domain:github.com)",
-      "Bash(bash .claude/check-crlf.sh scripts/cgi/quecmanager/vpn/tailscale.sh)"
+      "Bash(bash .claude/check-crlf.sh scripts/cgi/quecmanager/vpn/tailscale.sh)",
+      "Bash(bash \"D:/Projects/QM PROJECT/QManager/.claude/check-crlf.sh\" \"D:/Projects/QM PROJECT/QManager/scripts/cgi/quecmanager/device/about.sh\")",
+      "Bash(bash \"D:/Projects/QM PROJECT/QManager/.claude/check-crlf.sh\" \"D:/Projects/QM PROJECT/QManager/scripts/usr/bin/qmanager_poller\")",
+      "Bash(bash .claude/check-crlf.sh scripts/cgi/quecmanager/device/about.sh)",
+      "Bash(bash .claude/check-crlf.sh scripts/usr/bin/qmanager_poller)",
+      "Bash(bash .claude/check-crlf.sh --fix scripts/cgi/quecmanager/device/about.sh)",
+      "Bash(busybox ash:*)"
     ]
   }
 }
