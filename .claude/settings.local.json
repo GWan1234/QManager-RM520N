@@ -44,7 +44,8 @@
       "Bash(bash .claude/check-crlf.sh scripts/cgi/quecmanager/device/about.sh)",
       "Bash(bash .claude/check-crlf.sh scripts/usr/bin/qmanager_poller)",
       "Bash(bash .claude/check-crlf.sh --fix scripts/cgi/quecmanager/device/about.sh)",
-      "Bash(busybox ash:*)"
+      "Bash(busybox ash:*)",
+      "Bash(bun remove:*)"
     ]
   }
 }
