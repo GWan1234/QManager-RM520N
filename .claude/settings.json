@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/Projects/**)",
+      "Bash(for dir:*)",
+      "Bash(do echo:*)",
+      "Read(//d/Projects/QM PROJECT/QManager/**)"
+    ]
+  }
+}
