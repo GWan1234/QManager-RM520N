@@ -6,6 +6,25 @@ type: project
 
 ## Validated Scripts
 
+### 2026-03-21 — qmanager-installer.sh (standalone installer)
+
+| Script                  | Status           | LF | Bashisms | Issues Fixed              |
+|-------------------------|------------------|----|----------|---------------------------|
+| `qmanager-installer.sh` | PASS (after fix) | OK | 0        | `ls -lh` -> `du -k` (x2) |
+
+#### Details
+
+- Lines 128, 342: `ls -lh "$ARCHIVE_PATH" | awk '{print $5}'` — BusyBox `ls` does not support `-h`. Replaced with `du -k "$ARCHIVE_PATH" | awk '{print $1 "K"}'`.
+- Glob fallthrough pattern on lines 236/244 correctly guarded with `[ -e ]` / `[ -f ]`.
+- Color variables correctly collapsed to empty strings when not a terminal (line 45).
+- `clear 2>/dev/null || true` is guarded — safe even if `clear` unavailable.
+- `command -v`, `killall`, `crontab -l | grep -v | crontab -`, `uci`, `tar xzf -C` all safe.
+- `local` usage: one variable per declaration throughout — no multi-var `local` violations.
+
+Total issues: 1 fixed (`ls -lh` used twice)
+
+---
+
 ### 2026-03-16 — Tailscale CGI Endpoint
 
 | Script                                     | Status           | LF               | Bashisms | jq Safety | Issues Fixed          |
