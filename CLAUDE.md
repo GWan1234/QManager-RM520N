@@ -17,7 +17,7 @@
 - **Radius:** 0.65rem base — softly rounded, not pill-shaped.
 
 ### Status Badge Pattern
-All status badges use `variant="outline"` with semantic color classes and `h-3 w-3` lucide icons. Never use solid badge variants (`variant="success"`, `variant="destructive"`, etc.) for status indicators.
+All status badges use `variant="outline"` with semantic color classes and `size-3` lucide icons. Never use solid badge variants (`variant="success"`, `variant="destructive"`, etc.) for status indicators.
 
 | State | Classes | Icon |
 | ----- | ------- | ---- |
@@ -29,7 +29,7 @@ All status badges use `variant="outline"` with semantic color classes and `h-3 w
 
 ```tsx
 <Badge variant="outline" className="bg-success/15 text-success hover:bg-success/20 border-success/30">
-  <CheckCircle2Icon className="h-3 w-3" />
+  <CheckCircle2Icon className="size-3" />
   Active
 </Badge>
 ```
@@ -73,4 +73,5 @@ All status badges use `variant="outline"` with semantic color classes and `h-3 w
 - **Verification**: `qmanager_dpi_verify` — curl with `--connect-to` SNI spoofing against speed.cloudflare.com
 - **Kernel support**: `dpi_check_kmod()` checks `/proc/config.gz` for `CONFIG_NETFILTER_NETLINK_QUEUE=y` (built-in) before trying lsmod/modprobe
 - **Init.d**: `qmanager_dpi` (procd, START=99, UCI-gated, single nfqws instance in either VO or masquerade mode)
+- **Installer jq caveat**: OpenWRT's jq lacks oniguruma — `test()` silently fails. Use `endswith()`/`contains()` instead (see memory: jq-no-regex)
 - **Dependencies**: `libnetfilter-queue`, `libnfnetlink`, `libmnl`, full `curl` (not BusyBox); kernel NFQUEUE support (built-in or `kmod-nft-queue`)
